@@ -8,9 +8,11 @@ chart, and table at once.
 ## Structure
 
 ```
-data/     Drop your .xlsx export(s) here
-server/   Express API — reads the Excel file, watches it for changes
+data/     Drop your .xlsx export(s) here (also committed — see Deploying)
+server/   Express API for local dev — reads the Excel file, watches it for changes
 client/   React (Vite) dashboard
+shared/   Excel parsing logic, used by both server/ (local) and api/ (Vercel)
+api/      Vercel serverless functions — same data, no file-watching (see Deploying)
 ```
 
 ## Run it
@@ -70,6 +72,26 @@ Each chart uses a fixed, data-appropriate type rather than a switchable one:
 - **Category / Top towns / Top brands** — horizontal bar (ranked, longer labels)
 - **Distributor performance** — a sortable leaderboard table instead of a
   chart, since 27 distributors with 8 metrics each reads better as a table
+
+## Deploying (Vercel, all-in-one)
+
+The whole app — static client + API — deploys to a single Vercel project.
+`vercel.json` handles the build; nothing else to configure. Two things worth
+understanding about how this differs from local dev:
+
+- **The API has no persistent disk on Vercel.** The `.xlsx` in `data/` is
+  bundled into the deployment (`vercel.json`'s `includeFiles`) and read
+  fresh from there — it does **not** watch for new files the way the local
+  server does.
+- **Updating data on Vercel = replace the file, commit, push.** Vercel
+  redeploys automatically (~1 min) and the new data is live. There's no
+  live-watching equivalent for a serverless deployment; if you want
+  upload-without-redeploy later, that needs real storage (e.g. Vercel Blob)
+  instead of a bundled file — ask if you want that built out.
+- Same origin, so the client just calls relative `/api/...` paths in
+  production — no environment variables needed for a single all-in-one
+  deployment. (`VITE_API_URL` in `client/.env.example` is only relevant if
+  you ever split the client and API into separate deployments.)
 
 ## Notes
 

@@ -1,6 +1,3 @@
 node_modules/
 dist/
 *.log
-
-# Secondary sales exports are real business data — keep them local, not in git.
-data/*.xlsx
