@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { apiUrl } from "../lib/api";
 
 const DataContext = createContext(null);
 
@@ -12,7 +13,7 @@ export function DataProvider({ children }) {
     setStatus((s) => (s === "ready" ? "refreshing" : "loading"));
     setError(null);
     try {
-      const [metaRes, recordsRes] = await Promise.all([fetch("/api/meta"), fetch("/api/records")]);
+      const [metaRes, recordsRes] = await Promise.all([fetch(apiUrl("/api/meta")), fetch(apiUrl("/api/records"))]);
       if (!metaRes.ok) throw new Error((await metaRes.json()).error || "Failed to load metadata");
       if (!recordsRes.ok) throw new Error((await recordsRes.json()).error || "Failed to load records");
       const [metaJson, recordsJson] = await Promise.all([metaRes.json(), recordsRes.json()]);
@@ -27,7 +28,7 @@ export function DataProvider({ children }) {
 
   const refresh = useCallback(async () => {
     try {
-      await fetch("/api/refresh", { method: "POST" });
+      await fetch(apiUrl("/api/refresh"), { method: "POST" });
     } catch {
       // ignore — the GET calls below will surface any real problem
     }
