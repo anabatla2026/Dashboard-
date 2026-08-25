@@ -1,6 +1,7 @@
 import { useAnimatedNumber } from "../hooks/useAnimatedNumber";
 import { money, num, pct } from "../lib/format";
 import { WalletIcon, BoxIcon, ReceiptIcon, TagIcon, PercentIcon, TruckIcon, LayersIcon, MapPinIcon } from "./Icons";
+import WidgetInfo from "./WidgetInfo";
 
 export default function KpiStrip({ rows, options }) {
   const netSalesRaw = rows.reduce((s, r) => s + r.netSales, 0);
@@ -31,22 +32,44 @@ export default function KpiStrip({ rows, options }) {
       hero: true,
       icon: WalletIcon,
       hue: "--hue-bu",
+      summary: "Total net sales for the current filter scope — the headline number everything else on this page breaks down.",
+      query: "SUM(netSales) across all matching line items.",
     },
-    { label: "Volume", value: volume.toFixed(2) + " T", sub: num(units) + " units sold", icon: BoxIcon, hue: "--hue-cat" },
+    {
+      label: "Volume",
+      value: volume.toFixed(2) + " T",
+      sub: num(units) + " units sold",
+      icon: BoxIcon,
+      hue: "--hue-cat",
+      summary: "Total shipped volume, in metric tons, for the current filter scope.",
+      query: "SUM(volume) across all matching line items; units sub-metric is SUM(units).",
+    },
     {
       label: "Invoices",
       value: num(Math.round(invoices)),
       sub: num(outlets) + " outlets served",
       icon: ReceiptIcon,
       hue: "--hue-ch",
+      summary: "How many distinct invoices were raised, and how many distinct outlets they were billed to.",
+      query: "COUNT(DISTINCT invoice); outlets sub-metric is COUNT(DISTINCT outletCode).",
     },
-    { label: "Avg invoice value", value: money(avgInvoice), sub: "per invoice", icon: TagIcon, hue: "--hue-town" },
+    {
+      label: "Avg invoice value",
+      value: money(avgInvoice),
+      sub: "per invoice",
+      icon: TagIcon,
+      hue: "--hue-town",
+      summary: "Average net sales per invoice — a rough proxy for average basket size.",
+      query: "SUM(netSales) ÷ COUNT(DISTINCT invoice).",
+    },
     {
       label: "Total discount",
       value: money(discount),
       sub: netSalesRaw > 0 ? pct((discountRaw / (netSalesRaw + discountRaw)) * 100) + " of gross" : "—",
       icon: PercentIcon,
       hue: "--hue-brand",
+      summary: "Total discount given, and what share that is of gross sales (net sales + discount).",
+      query: "SUM(discount); percentage is discount ÷ (netSales + discount).",
     },
     {
       label: "Distributors active",
@@ -54,6 +77,8 @@ export default function KpiStrip({ rows, options }) {
       sub: "of " + (options.dist?.length || 0) + " total",
       icon: TruckIcon,
       hue: "--hue-dist",
+      summary: "How many distinct distributors have at least one matching sale, out of your total roster.",
+      query: "COUNT(DISTINCT dist) within scope, vs. total distinct distributors in the full dataset.",
     },
     {
       label: "Business units",
@@ -61,6 +86,8 @@ export default function KpiStrip({ rows, options }) {
       sub: "of " + (options.bu?.length || 0) + " total",
       icon: LayersIcon,
       hue: "--hue-src",
+      summary: "How many of your business units have at least one matching sale.",
+      query: "COUNT(DISTINCT bu) within scope, vs. total in the full dataset.",
     },
     {
       label: "Towns covered",
@@ -68,6 +95,8 @@ export default function KpiStrip({ rows, options }) {
       sub: "of " + (options.town?.length || 0) + " total",
       icon: MapPinIcon,
       hue: "--hue-bu",
+      summary: "How many towns have at least one matching sale.",
+      query: "COUNT(DISTINCT town) within scope, vs. total in the full dataset.",
     },
   ];
 
@@ -84,6 +113,7 @@ export default function KpiStrip({ rows, options }) {
           const Icon = t.icon;
           return (
             <div className={"kpi-tile" + (t.hero ? " hero" : "")} key={t.label} style={{ "--tile-hue": `var(${t.hue})` }}>
+              <WidgetInfo title={t.label} summary={t.summary} query={t.query} hueVar={t.hue} />
               <div className="kpi-icon">
                 <Icon />
               </div>

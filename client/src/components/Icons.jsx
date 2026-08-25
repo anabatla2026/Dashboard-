@@ -120,6 +120,24 @@ export function MapPinIcon(props) {
   );
 }
 
+export function InfoIcon(props) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" {...props}>
+      <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 7.2v4M8 5.1v.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function CursorClickIcon(props) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" {...props}>
+      <path d="M5 2.5 5 12M5 9.5 3 11.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 2.5 12 8.5 8.7 9 9.7 12.5 8 13 7 9.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function MoonIcon(props) {
   return (
     <svg viewBox="0 0 16 16" fill="none" {...props}>

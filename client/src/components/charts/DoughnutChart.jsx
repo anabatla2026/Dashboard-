@@ -15,7 +15,7 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-export default function DoughnutChart({ rows, hueVar }) {
+export default function DoughnutChart({ rows, hueVar, onDrill, isActive, hasActive }) {
   const { show, hide } = useTooltip();
   const total = rows.reduce((s, r) => s + r.value, 0);
   const animatedTotal = useAnimatedNumber(total);
@@ -71,26 +71,31 @@ export default function DoughnutChart({ rows, hueVar }) {
           </g>
           {/* the lit top face */}
           <g transform={squashTransform}>
-            {slices.map((s, i) => (
-              <path
-                key={s.label + i}
-                d={s.d}
-                fill={s.color}
-                className="arc-slice"
-                style={{ "--i": i }}
-                stroke="var(--surface)"
-                strokeWidth="2"
-                onPointerMove={(e) =>
-                  show(e, {
-                    color: s.isOther ? cssVar("--text-muted") : cssVar(hueVar),
-                    label: s.label,
-                    value: moneyFull(s.value),
-                    extra: pct(s.fracPct),
-                  })
-                }
-                onPointerLeave={hide}
-              />
-            ))}
+            {slices.map((s, i) => {
+              const clickable = !!onDrill && !s.isOther;
+              const active = !!isActive && isActive(s.label);
+              return (
+                <path
+                  key={s.label + i}
+                  d={s.d}
+                  fill={s.color}
+                  className={"arc-slice" + (active ? " active" : "") + (hasActive && !active ? " dimmed" : "")}
+                  style={{ "--i": i, cursor: clickable ? "pointer" : "default" }}
+                  stroke="var(--surface)"
+                  strokeWidth="2"
+                  onPointerMove={(e) =>
+                    show(e, {
+                      color: s.isOther ? cssVar("--text-muted") : cssVar(hueVar),
+                      label: s.label,
+                      value: moneyFull(s.value),
+                      extra: pct(s.fracPct),
+                    })
+                  }
+                  onPointerLeave={hide}
+                  onClick={clickable ? () => onDrill(s.label) : undefined}
+                />
+              );
+            })}
           </g>
           <text x={CX} y={CY - 3} textAnchor="middle" className="center-total" fontSize="16">
             {compact(animatedTotal)}
@@ -101,16 +106,25 @@ export default function DoughnutChart({ rows, hueVar }) {
         </svg>
       </div>
       <div className="legend">
-        {slices.map((s, i) => (
-          <div className="legend-row" key={s.label + i} style={{ "--i": i }}>
-            <span className="sw" style={{ background: s.color }} />
-            <span className="lbl" title={s.label}>
-              {s.label}
-            </span>
-            <span className="val">{compact(s.value)}</span>
-            <span className="pct">{pct(s.fracPct)}</span>
-          </div>
-        ))}
+        {slices.map((s, i) => {
+          const clickable = !!onDrill && !s.isOther;
+          const active = !!isActive && isActive(s.label);
+          return (
+            <div
+              className={"legend-row" + (active ? " active" : "") + (hasActive && !active ? " dimmed" : "") + (clickable ? " clickable" : "")}
+              key={s.label + i}
+              style={{ "--i": i }}
+              onClick={clickable ? () => onDrill(s.label) : undefined}
+            >
+              <span className="sw" style={{ background: s.color }} />
+              <span className="lbl" title={s.label}>
+                {s.label}
+              </span>
+              <span className="val">{compact(s.value)}</span>
+              <span className="pct">{pct(s.fracPct)}</span>
+            </div>
+          );
+        })}
       </div>
     </>
   );

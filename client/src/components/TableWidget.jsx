@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { num } from "../lib/format";
+import WidgetInfo from "./WidgetInfo";
 
 const PAGE_SIZE = 25;
 
@@ -65,6 +66,14 @@ export default function TableWidget({ rows }) {
         <div>
           <div className="widget-title">Transaction detail</div>
           <div className="widget-sub">Line-item rows for the current filter scope</div>
+        </div>
+        <div className="widget-controls">
+          <WidgetInfo
+            title="Transaction detail"
+            summary="The raw line items behind every chart and KPI on this page — one row per SKU sold on an invoice. Use this when you need the actual transactions, not just an aggregate."
+            query="Every row matching the global filters, unaggregated. The search box further narrows by invoice, distributor, outlet, town, or SKU text."
+            tip="Click any column header to sort by it."
+          />
         </div>
       </div>
       <div className="table-toolbar">

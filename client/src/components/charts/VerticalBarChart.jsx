@@ -21,7 +21,7 @@ function gradId(hueVar) {
   return `bar-grad-${hueVar.replace("--hue-", "")}`;
 }
 
-export default function VerticalBarChart({ rows, hueVar }) {
+export default function VerticalBarChart({ rows, hueVar, onDrill, isActive, hasActive }) {
   const { show, hide } = useTooltip();
   if (rows.length === 0) return <div className="chart-empty">No data for current filters</div>;
 
@@ -79,13 +79,16 @@ export default function VerticalBarChart({ rows, hueVar }) {
           ? "color-mix(in srgb, var(--text-muted) 65%, black 25%)"
           : `color-mix(in oklch, var(${hueVar}) 62%, black 28%)`;
         const faces = extrudeFaces(bx, by, barW, barH, DX, DY);
+        const clickable = !!onDrill && !r.isOther;
+        const active = !!isActive && isActive(r.label);
         return (
           <g
             key={r.label + i}
-            className="bandgroup"
-            style={{ "--i": i }}
+            className={"bandgroup" + (active ? " active" : "") + (hasActive && !active ? " dimmed" : "")}
+            style={{ "--i": i, cursor: clickable ? "pointer" : "default" }}
             onPointerMove={(e) => show(e, { color: tooltipColor(r), label: r.label, value: moneyFull(r.value) })}
             onPointerLeave={hide}
+            onClick={clickable ? () => onDrill(r.label) : undefined}
           >
             <g className="bar3d bar3d-v">
               <path d={faces.side} fill={side} className="bar-face-side" />

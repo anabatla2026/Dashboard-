@@ -20,7 +20,7 @@ function gradId(hueVar) {
 // `width` lets a caller match this chart's internal viewBox aspect ratio to
 // how wide its card actually is — since the svg stretches non-uniformly to
 // fill its box, a mismatched aspect ratio would visibly distort bars/text.
-export default function HorizontalBarChart({ rows, hueVar, width = 480, labelChars = 17 }) {
+export default function HorizontalBarChart({ rows, hueVar, width = 480, labelChars = 17, onDrill, isActive, hasActive }) {
   const { show, hide } = useTooltip();
   if (rows.length === 0) return <div className="chart-empty">No data for current filters</div>;
 
@@ -79,13 +79,16 @@ export default function HorizontalBarChart({ rows, hueVar, width = 480, labelCha
           ? "color-mix(in srgb, var(--text-muted) 65%, black 25%)"
           : `color-mix(in oklch, var(${hueVar}) 60%, black 26%)`;
         const faces = extrudeFaces(LABEL_W, barY, barW, BAR_H, DX, DY);
+        const clickable = !!onDrill && !r.isOther;
+        const active = !!isActive && isActive(r.label);
         return (
           <g
             key={r.label + i}
-            className="bandgroup"
-            style={{ "--i": i }}
+            className={"bandgroup" + (active ? " active" : "") + (hasActive && !active ? " dimmed" : "")}
+            style={{ "--i": i, cursor: clickable ? "pointer" : "default" }}
             onPointerMove={(e) => show(e, { color: tooltipColor(r), label: r.label, value: moneyFull(r.value) })}
             onPointerLeave={hide}
+            onClick={clickable ? () => onDrill(r.label) : undefined}
           >
             <text x={LABEL_W - 8} y={rowY + ROW_H / 2 + 3.5} className="axis-label hbar-label" textAnchor="end">
               {truncate(r.label, labelChars)}

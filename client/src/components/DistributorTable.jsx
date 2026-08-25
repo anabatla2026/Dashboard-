@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { compact, num, pct } from "../lib/format";
+import WidgetInfo from "./WidgetInfo";
 
 const COLS = [
   { key: "rank", label: "#", type: "num" },
@@ -72,6 +73,14 @@ export default function DistributorTable({ rows }) {
         <div>
           <div className="widget-title">Distributor performance</div>
           <div className="widget-sub">Ranked leaderboard for the current filter scope</div>
+        </div>
+        <div className="widget-controls">
+          <WidgetInfo
+            title="Distributor performance"
+            summary="Every distributor with at least one matching sale, ranked by net sales, with the metrics that explain that ranking — volume, units, invoice count, outlets served, and average invoice value."
+            query="Grouped by Distributor: SUM(netSales), SUM(volume), SUM(units), COUNT(DISTINCT invoice), COUNT(DISTINCT outletCode); avg invoice = netSales ÷ invoices; share = netSales ÷ SUM(netSales) across all distributors in scope."
+            tip="Click any column header to sort by it."
+          />
         </div>
       </div>
       <div className="table-wrap" style={{ margin: "12px 16px 16px" }}>

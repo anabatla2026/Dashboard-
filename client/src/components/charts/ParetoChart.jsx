@@ -19,7 +19,7 @@ function cssVar(name) {
 // mode: "line" | "area" — a Pareto / cumulative-concentration curve.
 // Rank (an ordinal sequence, not a category) is the one axis that
 // legitimately earns a line or area mark instead of bars.
-export default function ParetoChart({ rows, dim, hueVar, mode }) {
+export default function ParetoChart({ rows, dim, hueVar, mode, onDrill, isActive }) {
   const { show, hide } = useTooltip();
   const [hoverIdx, setHoverIdx] = useState(null);
   const series = useMemo(() => cumulativeShare(rows, dim), [rows, dim]);
@@ -91,47 +91,52 @@ export default function ParetoChart({ rows, dim, hueVar, mode }) {
       {crossIdx >= 0 && (
         <circle cx={pts[crossIdx].x} cy={pts[crossIdx].y} r="3.5" className="pareto-mark" fill={`var(${hueVar})`} />
       )}
-      {pts.map((pt, i) => (
-        <g
-          key={pt.p.label + i}
-          className="bandgroup"
-          style={{ "--i": i }}
-          onPointerMove={(e) => {
-            setHoverIdx(i);
-            show(e, {
-              color: cssVar(hueVar),
-              label: `#${pt.p.rank} ${truncate(String(pt.p.label), 22)}`,
-              value: pct(pt.p.cumPct) + " cumulative",
-              extra: moneyFull(pt.p.value),
-            });
-          }}
-          onPointerLeave={() => {
-            setHoverIdx(null);
-            hide();
-          }}
-        >
-          <circle
-            cx={pt.x}
-            cy={pt.y}
-            r={i === hoverIdx ? "5.5" : "3"}
-            fill={`var(${hueVar})`}
-            stroke="var(--surface)"
-            strokeWidth="1.5"
-            className="pt-mark"
-          />
-          <rect x={MARGIN_L + band * i} y={MARGIN_T} width={band} height={PLOT_H} fill="transparent" />
-          {(i % labelStep === 0 || i === n - 1) && (
-            <text
-              x={pt.x}
-              y={MARGIN_T + PLOT_H + 14}
-              className={"axis-label" + (i === hoverIdx ? " active" : "")}
-              textAnchor="middle"
-            >
-              #{pt.p.rank}
-            </text>
-          )}
-        </g>
-      ))}
+      {pts.map((pt, i) => {
+        const clickable = !!onDrill;
+        const active = !!isActive && isActive(pt.p.label);
+        return (
+          <g
+            key={pt.p.label + i}
+            className={"bandgroup" + (active ? " active" : "")}
+            style={{ "--i": i, cursor: clickable ? "pointer" : "default" }}
+            onPointerMove={(e) => {
+              setHoverIdx(i);
+              show(e, {
+                color: cssVar(hueVar),
+                label: `#${pt.p.rank} ${truncate(String(pt.p.label), 22)}`,
+                value: pct(pt.p.cumPct) + " cumulative",
+                extra: moneyFull(pt.p.value),
+              });
+            }}
+            onPointerLeave={() => {
+              setHoverIdx(null);
+              hide();
+            }}
+            onClick={clickable ? () => onDrill(pt.p.label) : undefined}
+          >
+            <circle
+              cx={pt.x}
+              cy={pt.y}
+              r={active ? "7" : i === hoverIdx ? "5.5" : "3"}
+              fill={`var(${hueVar})`}
+              stroke="var(--surface)"
+              strokeWidth="1.5"
+              className="pt-mark"
+            />
+            <rect x={MARGIN_L + band * i} y={MARGIN_T} width={band} height={PLOT_H} fill="transparent" />
+            {(i % labelStep === 0 || i === n - 1 || active) && (
+              <text
+                x={pt.x}
+                y={MARGIN_T + PLOT_H + 14}
+                className={"axis-label" + (i === hoverIdx || active ? " active" : "")}
+                textAnchor="middle"
+              >
+                #{pt.p.rank}
+              </text>
+            )}
+          </g>
+        );
+      })}
     </svg>
   );
 }
