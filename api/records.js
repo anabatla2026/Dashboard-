@@ -1,9 +1,9 @@
 import { loadData } from "../shared/excelStore.js";
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   try {
-    const { rows } = loadData();
-    res.status(200).json(rows);
+    const { primary, secondary } = await loadData();
+    res.status(200).json({ primary: primary.rows, secondary: secondary.rows });
   } catch (err) {
     res.status(503).json({ error: err.message });
   }

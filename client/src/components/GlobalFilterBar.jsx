@@ -3,15 +3,16 @@ import { useData } from "../context/DataContext";
 import DimFilter from "./DimFilter";
 import { CalendarIcon } from "./Icons";
 
-const TIME_KEYS = new Set(["year", "month", "date"]);
+const TIME_KEYS = new Set(["year", "month"]);
 
 export default function GlobalFilterBar() {
-  const { dims, filters, setFilter, resetAll, filteredRows, activeCount, totalRows } = useFilters();
+  const { dims, filters, setFilter, resetAll, filteredRows, filteredPrimaryRows, activeCount, totalRows, totalPrimaryRows } =
+    useFilters();
   const { meta } = useData();
   const options = meta?.dimensions || {};
 
   const timeDims = dims.filter((d) => TIME_KEYS.has(d.key));
-  const bizDims = dims.filter((d) => !TIME_KEYS.has(d.key));
+  const bizDims  = dims.filter((d) => !TIME_KEYS.has(d.key));
 
   return (
     <div className="filterbar">
@@ -48,8 +49,16 @@ export default function GlobalFilterBar() {
           </button>
         )}
         <div className="filterbar-count">
-          <strong>{filteredRows.length.toLocaleString()}</strong>
-          <span> of {totalRows.toLocaleString()} rows</span>
+          <span className="filterbar-count-row">
+            <strong>{filteredRows.length.toLocaleString()}</strong>
+            <span> / {totalRows.toLocaleString()} sec</span>
+          </span>
+          {totalPrimaryRows > 0 && (
+            <span className="filterbar-count-row">
+              <strong>{filteredPrimaryRows.length.toLocaleString()}</strong>
+              <span> / {totalPrimaryRows.toLocaleString()} pri</span>
+            </span>
+          )}
         </div>
       </div>
     </div>

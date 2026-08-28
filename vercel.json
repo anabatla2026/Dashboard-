@@ -1,10 +1,11 @@
 {
   "installCommand": "npm install && cd client && npm install",
-  "buildCommand": "cd client && npm run build",
+  "buildCommand": "node --max-old-space-size=4096 scripts/build-data-cache.js && cd client && npm run build",
   "outputDirectory": "client/dist",
   "functions": {
     "api/**/*.js": {
-      "includeFiles": "data/**"
+      "includeFiles": "data/prebuilt.json",
+      "maxDuration": 30
     }
   }
 }

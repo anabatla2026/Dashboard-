@@ -1,16 +1,16 @@
 // The filterable dimensions the global filter bar exposes. Order here is
 // display order — date/time facets first, then business dimensions.
+// Per the 2026-08-25 MOM: retain Year/Month/Category/Channel Type/Town/
+// Distributor, add Region; remove Date/Business Unit/Order Source.
 export const DIMS = [
-  { key: "year", label: "Year" },
-  { key: "month", label: "Month" },
-  { key: "date", label: "Date" },
-  { key: "bu", label: "Business unit" },
-  { key: "cat", label: "Category" },
+  { key: "year",   label: "Year" },
+  { key: "month",  label: "Month" },
+  { key: "region", label: "Region" },
+  { key: "cat",    label: "Category" },
   { key: "chType", label: "Channel type" },
-  { key: "town", label: "Town" },
-  { key: "dist", label: "Distributor" },
-  { key: "brand", label: "Brand" },
-  { key: "orderFrom", label: "Order source" },
+  { key: "town",   label: "Town" },
+  { key: "dist",   label: "Distributor" },
+  { key: "brand",  label: "Brand" },
 ];
 
 // dim key -> true for every dimension a chart can drill into by clicking a
