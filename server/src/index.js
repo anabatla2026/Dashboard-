@@ -9,40 +9,41 @@ app.use(compression());
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
-app.get("/api/meta", (req, res) => {
+app.get("/api/meta", async (req, res) => {
   try {
-    const { meta } = loadData();
-    res.json(meta);
+    const { primary, secondary } = await loadData();
+    res.json({ primary: primary.meta, secondary: secondary.meta });
   } catch (err) {
     res.status(503).json({ error: err.message });
   }
 });
 
-app.get("/api/records", (req, res) => {
+app.get("/api/records", async (req, res) => {
   try {
-    const { rows } = loadData();
-    res.json(rows);
+    const { primary, secondary } = await loadData();
+    res.json({ primary: primary.rows, secondary: secondary.rows });
   } catch (err) {
     res.status(503).json({ error: err.message });
   }
 });
 
-app.post("/api/refresh", (req, res) => {
+app.post("/api/refresh", async (req, res) => {
   try {
-    const { meta } = loadData({ force: true });
-    res.json(meta);
+    const { primary, secondary } = await loadData({ force: true });
+    res.json({ primary: primary.meta, secondary: secondary.meta });
   } catch (err) {
     res.status(503).json({ error: err.message });
   }
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`Secondary sales API listening on http://localhost:${PORT}`);
+app.listen(PORT, async () => {
+  console.log(`Sales dashboard API listening on http://localhost:${PORT}`);
   console.log(`Watching for Excel files in: ${getDataDir()}`);
   try {
-    const { meta } = loadData();
-    console.log(`Initial data loaded: ${meta.sourceFile} (${meta.recordCount} rows)`);
+    const { primary, secondary } = await loadData();
+    if (secondary.meta) console.log(`Secondary loaded: ${secondary.meta.sourceFile} (${secondary.meta.recordCount} rows)`);
+    if (primary.meta) console.log(`Primary loaded: ${primary.meta.sourceFile} (${primary.meta.recordCount} rows)`);
   } catch (err) {
     console.warn("Warning:", err.message);
   }
