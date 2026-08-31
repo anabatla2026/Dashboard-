@@ -6,7 +6,6 @@ import GlobalFilterBar from "./components/GlobalFilterBar";
 import KpiStrip from "./components/KpiStrip";
 import ChartCard from "./components/ChartCard";
 import DistributorTable from "./components/DistributorTable";
-import TableWidget from "./components/TableWidget";
 import RegionTable from "./components/RegionTable";
 import ClassificationPlaceholder from "./components/ClassificationPlaceholder";
 import Skeleton from "./components/Skeleton";
@@ -167,10 +166,7 @@ function Dashboard() {
       </section>
 
       <section className="section">
-        <div className="table-row-2">
-          <DistributorTable rows={filteredRows} />
-          <TableWidget rows={filteredRows} />
-        </div>
+        <DistributorTable rows={filteredRows} />
       </section>
 
       {/* ── Classification-wise Productivity & Sales (reserved, OP-02) ── */}

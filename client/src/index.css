@@ -551,33 +551,6 @@ button {
   text-align: center;
 }
 
-/* Both cards stretch to the taller sibling's height instead of each hugging
-   its own row count — otherwise a 3-row table sits next to a 19-row one and
-   the row looks lopsided (one tiny card, one tall scrolling card). */
-.table-row-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  align-items: stretch;
-}
-.table-row-2 > .widget {
-  display: flex;
-  flex-direction: column;
-  /* Without this, a wide table (Transaction Detail's min-width: 980px)
-     blows out its grid track past the 1fr split and crushes its sibling
-     column instead of scrolling within its own half. */
-  min-width: 0;
-}
-.table-row-2 > .widget .table-wrap {
-  flex: 1;
-  min-height: 0;
-}
-@media (max-width: 1080px) {
-  .table-row-2 {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* ---------- Section heads ---------- */
 .section {
   margin-top: 18px;
@@ -1391,26 +1364,6 @@ button {
 }
 
 /* ---------- Table widget ---------- */
-.table-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px 0;
-}
-.search-input {
-  flex: 1;
-  min-width: 200px;
-  max-width: 320px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface-2);
-  color: var(--text-primary);
-  font-size: 10.5px;
-}
-.search-input::placeholder {
-  color: var(--text-muted);
-}
 .table-wrap {
   margin: 12px 16px 0;
   border: 1px solid var(--border);
@@ -1423,14 +1376,6 @@ table {
   width: 100%;
   table-layout: fixed;
   font-size: 10px;
-}
-/* Transaction Detail alone has enough columns (and long text — SKU, brand,
-   town…) that squeezing it to fit is worse than a horizontal scrollbar. The
-   summary tables (region/distributor) stay fluid via table-layout: fixed
-   above, so two fit side by side with no scrolling. */
-.table-wrap.wide table {
-  table-layout: auto;
-  min-width: 980px;
 }
 thead th {
   position: sticky;
@@ -1506,47 +1451,6 @@ tbody tr:last-child td {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-radius: 4px;
   transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.table-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px 16px;
-  font-size: 10px;
-  color: var(--text-muted);
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.table-footer strong {
-  color: var(--text-secondary);
-  font-weight: 700;
-}
-.pager {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.pager button {
-  background: var(--surface-2);
-  border: 1px solid var(--border-strong);
-  color: var(--text-primary);
-  padding: 6px 11px;
-  border-radius: 7px;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 600;
-}
-.pager button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.pager button:not(:disabled):hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.pager .pg {
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
 }
 
 /* ---------- States ---------- */
@@ -1764,7 +1668,6 @@ footer.credit {
 /* Interactive chrome gets consistent, snappy transitions */
 .icon-btn,
 .dim-filter-btn,
-.pager button,
 .filterbar-reset {
   transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, transform 0.12s ease,
     box-shadow 0.15s ease;
@@ -1773,8 +1676,7 @@ footer.credit {
   transform: translateY(-1px);
 }
 .icon-btn:active,
-.dim-filter-btn:active,
-.pager button:active {
+.dim-filter-btn:active {
   transform: scale(0.96);
 }
 .tooltip {
