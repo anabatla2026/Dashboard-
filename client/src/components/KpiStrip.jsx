@@ -1,8 +1,8 @@
 import { useData } from "../context/DataContext";
 import { useAnimatedNumber } from "../hooks/useAnimatedNumber";
-import { money, compact, num, pct } from "../lib/format";
+import { money, num, pct } from "../lib/format";
 import { calcGoly, calcYtdGoly, formatPeriod } from "../lib/period";
-import { WalletIcon, BoxIcon, TagIcon, TruckIcon, MapPinIcon, LayersIcon } from "./Icons";
+import { WalletIcon, BoxIcon, TagIcon, TruckIcon, MapPinIcon } from "./Icons";
 import WidgetInfo from "./WidgetInfo";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -13,18 +13,6 @@ function sumField(rows, key) {
 
 function distinctCount(rows, key) {
   return new Set(rows.map((r) => r[key])).size;
-}
-
-// Top-N breakdown of a row set by a given field, summed on netSales.
-function breakdown(rows, field, n) {
-  const map = new Map();
-  for (const r of rows) {
-    const seg = r[field] || "Other";
-    map.set(seg, (map.get(seg) || 0) + (r.netSales || 0));
-  }
-  return Array.from(map, ([label, value]) => ({ label, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, n);
 }
 
 // ── Animated number wrappers ─────────────────────────────────────────────────
@@ -86,13 +74,12 @@ export default function KpiStrip({ rows, primaryRows, options, allSecondaryRows,
   const priYtd = calcYtdGoly(priAll, filters);
   const periodLabel = formatPeriod(secMtd?.period || priMtd?.period);
 
-  // ── Segment-wise Sales — primary data source only, per the approved
-  // design (Dashboard 1 Design & Acceptance Sign-off §3.2/§3.4). Primary's
-  // "Customer Group2" field doesn't literally carry GT/Export/MT labels —
-  // that mapping hasn't been supplied — so this shows the real customer
-  // groups with an honest pending badge rather than a guessed bucketing. ──
-  const segments = breakdown(primaryRows, "segment", 3);
-  const priSalesForShare = sumField(primaryRows, "netSales");
+  // Note: Segment-wise Sales (GT/Export/MT, primary source only per the
+  // approved design §3.2) is NOT shown — primary's only categorical field
+  // is Customer Group2 (Q-Commerce, LMT, distributor names, …), which
+  // doesn't map to GT/Export/MT, and no such mapping has been supplied yet.
+  // Showing the raw customer groups instead would misrepresent this KPI, so
+  // it's omitted rather than approximated.
 
   // Animated values
   const secMtdVal = useAnimatedNumber(secMtd?.cur || 0);
@@ -105,9 +92,6 @@ export default function KpiStrip({ rows, primaryRows, options, allSecondaryRows,
   const secDist   = useAnimatedNumber(secDistRaw, 500);
   const outlets   = useAnimatedNumber(secOutletsRaw, 500);
   const prodPct   = useAnimatedNumber(productivePct, 500);
-  const seg0Val   = useAnimatedNumber(segments[0]?.value || 0);
-  const seg1Val   = useAnimatedNumber(segments[1]?.value || 0);
-  const seg2Val   = useAnimatedNumber(segments[2]?.value || 0);
 
   const hasPrimary   = primaryRows.length > 0;
   const hasSecondary = rows.length > 0;
@@ -229,19 +213,6 @@ export default function KpiStrip({ rows, primaryRows, options, allSecondaryRows,
             query="COUNT(DISTINCT dist) within scope vs. total roster."
           />
         )}
-        {hasPrimary && segments.map((seg, i) => (
-          <KpiTile
-            key={seg.label}
-            label={seg.label}
-            value={money([seg0Val, seg1Val, seg2Val][i])}
-            sub={priSalesForShare > 0 ? pct((seg.value / priSalesForShare) * 100) + " of primary" : "—"}
-            icon={LayersIcon}
-            hue={["--hue-bu", "--hue-brand", "--hue-risk"][i]}
-            badge={i === 0 ? "Mapping pending" : undefined}
-            summary={`Primary net sales for customer group "${seg.label}". Segment-wise Sales is required to be General Trade / Export / Modern Trade (primary source only, per the approved design) — that mapping from Customer Group hasn't been supplied yet, so the real customer group names are shown instead of guessed buckets.`}
-            query={`SUM(Value) WHERE Customer Group2 Name = '${seg.label}' (primary).`}
-          />
-        ))}
       </div>
     </div>
   );

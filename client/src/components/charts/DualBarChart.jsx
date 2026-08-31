@@ -122,20 +122,31 @@ export default function DualBarChart({
               <title>{r.label}</title>
             </text>
 
-            <g
+            {bar(LABEL_W, groupY, wA, BAR_H, hueVarA, idA, r.isOther, "a")}
+            {bar(LABEL_W, groupY + BAR_H + BAR_GAP, wB, BAR_H, hueVarB, idB, r.isOther, "b")}
+
+            {/* Hit-test rects on top, split top/bottom half so hover always
+                wins (paths only catch events on their filled pixels, and a
+                thin bar is an unreliable hover target) and correctly
+                attributes to secondary vs primary. */}
+            <rect
+              x="0"
+              y={rowY}
+              width={W}
+              height={ROW_H / 2}
+              fill="transparent"
               onPointerMove={(e) => show(e, { color: cssVar(hueVarA), label: `${r.label} · ${labelA}`, value: moneyFull(r.secondary) })}
               onPointerLeave={hide}
-            >
-              {bar(LABEL_W, groupY, wA, BAR_H, hueVarA, idA, r.isOther, "a")}
-            </g>
-            <g
+            />
+            <rect
+              x="0"
+              y={rowY + ROW_H / 2}
+              width={W}
+              height={ROW_H / 2}
+              fill="transparent"
               onPointerMove={(e) => show(e, { color: cssVar(hueVarB), label: `${r.label} · ${labelB}`, value: moneyFull(r.primary) })}
               onPointerLeave={hide}
-            >
-              {bar(LABEL_W, groupY + BAR_H + BAR_GAP, wB, BAR_H, hueVarB, idB, r.isOther, "b")}
-            </g>
-
-            <rect x="0" y={rowY} width={W} height={ROW_H} fill="transparent" />
+            />
           </g>
         );
       })}
