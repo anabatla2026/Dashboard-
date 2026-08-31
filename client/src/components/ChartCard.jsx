@@ -1,7 +1,8 @@
 import { useMemo } from "react";
-import { aggregateTop } from "../lib/aggregate";
+import { aggregateTop, aggregateDualTop } from "../lib/aggregate";
 import { useDrill } from "../hooks/useDrill";
 import { useDrillPath } from "../hooks/useDrillPath";
+import { useElementWidth } from "../hooks/useElementWidth";
 import { truncate } from "../lib/format";
 import { DIM_LABELS } from "../lib/hierarchies";
 import WidgetInfo from "./WidgetInfo";
@@ -11,6 +12,8 @@ import HorizontalBarChart from "./charts/HorizontalBarChart";
 import DoughnutChart from "./charts/DoughnutChart";
 import TrendChart from "./charts/TrendChart";
 import ParetoChart from "./charts/ParetoChart";
+import DualBarChart from "./charts/DualBarChart";
+import DualTrendChart from "./charts/DualTrendChart";
 
 const CHART_LABEL = {
   "bar-v": "Ranked",
@@ -19,9 +22,14 @@ const CHART_LABEL = {
   trend: "Trend",
   "pareto-line": "Cumulative concentration",
   "pareto-area": "Cumulative concentration",
+  "dual-bar-h": "Primary vs Secondary",
+  "dual-trend": "Primary vs Secondary trend",
 };
 
-const AGGREGATED_TYPES = new Set(["bar-v", "bar-h", "doughnut"]);
+const AGGREGATED_TYPES = new Set(["bar-v", "bar-h", "doughnut", "dual-bar-h"]);
+const DUAL_TYPES = new Set(["dual-bar-h", "dual-trend"]);
+const SERIES_HUE_SECONDARY = "--hue-ch";
+const SERIES_HUE_PRIMARY = "--hue-bu";
 
 export default function ChartCard({
   title,
@@ -30,6 +38,8 @@ export default function ChartCard({
   hueVar,
   topN = 7,
   rows,
+  secondaryRows,
+  primaryRows,
   className = "",
   chartWidth,
   labelChars,
@@ -42,6 +52,7 @@ export default function ChartCard({
   fallbackSummary,
   fallbackQuery,
 }) {
+  const isDual = DUAL_TYPES.has(type);
   const distinctDates = useMemo(() => (type === "trend" ? new Set(rows.map((r) => r.date)).size : 0), [rows, type]);
   const useFallback = type === "trend" && distinctDates <= 1 && fallbackDim;
   const effectiveType = useFallback ? "bar-h" : type;
@@ -58,18 +69,36 @@ export default function ChartCard({
   const useHierarchy = isAggType && pathDrill.hasHierarchy;
 
   const scopedRows = useMemo(() => {
-    if (!useHierarchy || pathDrill.path.length === 0) return rows;
+    if (isDual || !useHierarchy || pathDrill.path.length === 0) return rows;
     return rows.filter((r) => pathDrill.path.every((step) => r[step.dim] === step.value));
-  }, [rows, useHierarchy, pathDrill.path]);
+  }, [rows, isDual, useHierarchy, pathDrill.path]);
+
+  const scopedSecondaryRows = useMemo(() => {
+    if (!isDual) return null;
+    if (!useHierarchy || pathDrill.path.length === 0) return secondaryRows;
+    return secondaryRows.filter((r) => pathDrill.path.every((step) => r[step.dim] === step.value));
+  }, [isDual, secondaryRows, useHierarchy, pathDrill.path]);
+
+  const scopedPrimaryRows = useMemo(() => {
+    if (!isDual) return null;
+    if (!useHierarchy || pathDrill.path.length === 0) return primaryRows;
+    return primaryRows.filter((r) => pathDrill.path.every((step) => r[step.dim] === step.value));
+  }, [isDual, primaryRows, useHierarchy, pathDrill.path]);
 
   const aggDim = useHierarchy ? pathDrill.currentDim : effectiveDim;
 
   const aggregated = useMemo(() => {
-    if (!isAggType) return null;
+    if (!isAggType || effectiveType === "dual-bar-h") return null;
     return aggregateTop(scopedRows, aggDim, effectiveTopN);
-  }, [scopedRows, aggDim, effectiveTopN, isAggType]);
+  }, [scopedRows, aggDim, effectiveTopN, isAggType, effectiveType]);
 
-  const hasOther = aggregated?.some((r) => r.isOther);
+  const dualAggregated = useMemo(() => {
+    if (effectiveType !== "dual-bar-h") return null;
+    return aggregateDualTop(scopedSecondaryRows, scopedPrimaryRows, aggDim, effectiveTopN);
+  }, [effectiveType, scopedSecondaryRows, scopedPrimaryRows, aggDim, effectiveTopN]);
+
+  const activeAggregated = dualAggregated || aggregated;
+  const hasOther = activeAggregated?.some((r) => r.isOther);
   const drilledIn = useHierarchy && pathDrill.path.length > 0;
 
   const rootTitle = useFallback ? fallbackTitle || title : title;
@@ -84,6 +113,17 @@ export default function ChartCard({
   const chipDrill = isAggType && useHierarchy ? null : simpleDrill; // the plain single-chip only applies when there's no breadcrumb
 
   const canDrillAny = isAggType ? !!(useHierarchy ? pathDrill.onDrill || pathDrill.levels.length > 1 : simpleDrill.drillable) : simpleDrill.drillable;
+
+  // bar-h / dual-bar-h stretch their svg non-uniformly (preserveAspectRatio
+  // "none") to fill the card — if the viewBox width doesn't match the card's
+  // real rendered width, the browser can't resolve the svg's percentage
+  // height and falls back to the viewBox's intrinsic ratio, which balloons
+  // the whole card. Measuring the real width and feeding it back in as the
+  // viewBox width keeps the two in sync at any card size.
+  const isRowChart = effectiveType === "bar-h" || effectiveType === "dual-bar-h";
+  const [bodyRef, measuredWidth] = useElementWidth(chartWidth || 480);
+  const effectiveChartWidth = isRowChart ? measuredWidth : chartWidth;
+
   const displayTip =
     tip ||
     (canDrillAny
@@ -102,8 +142,8 @@ export default function ChartCard({
           ) : (
             <div className="widget-sub">
               {useFallback
-                ? `Ranked · single day of data so far${hasOther ? ` · top ${aggregated.length - 1} shown` : ""}`
-                : `${CHART_LABEL[effectiveType]}${hasOther ? ` · top ${aggregated.length - 1} shown` : ""}`}
+                ? `Ranked · single day of data so far${hasOther ? ` · top ${activeAggregated.length - 1} shown` : ""}`
+                : `${CHART_LABEL[effectiveType]}${hasOther ? ` · top ${activeAggregated.length - 1} shown` : ""}`}
             </div>
           )}
         </div>
@@ -120,7 +160,12 @@ export default function ChartCard({
         </div>
       </div>
       <div
-        className={"chart-body" + (effectiveType === "doughnut" ? " donut" : "") + (effectiveType === "trend" ? " trend" : "")}
+        ref={isRowChart ? bodyRef : undefined}
+        className={
+          "chart-body" +
+          (effectiveType === "doughnut" ? " donut" : "") +
+          (effectiveType === "trend" || effectiveType === "dual-trend" ? " trend" : "")
+        }
       >
         {effectiveType === "bar-v" && (
           <VerticalBarChart
@@ -135,7 +180,7 @@ export default function ChartCard({
           <HorizontalBarChart
             rows={aggregated}
             hueVar={hueVar}
-            width={chartWidth}
+            width={effectiveChartWidth}
             labelChars={labelChars}
             onDrill={activeOnDrill}
             isActive={activeIsActive}
@@ -152,6 +197,21 @@ export default function ChartCard({
           />
         )}
         {effectiveType === "trend" && <TrendChart rows={rows} hueVar={hueVar} />}
+        {effectiveType === "dual-bar-h" && (
+          <DualBarChart
+            rows={dualAggregated}
+            hueVarA={SERIES_HUE_SECONDARY}
+            hueVarB={SERIES_HUE_PRIMARY}
+            width={effectiveChartWidth}
+            labelChars={labelChars}
+            onDrill={activeOnDrill}
+            isActive={activeIsActive}
+            hasActive={activeHasActive}
+          />
+        )}
+        {effectiveType === "dual-trend" && (
+          <DualTrendChart secondaryRows={secondaryRows} primaryRows={primaryRows} hueVarA={SERIES_HUE_SECONDARY} hueVarB={SERIES_HUE_PRIMARY} />
+        )}
         {effectiveType === "pareto-line" && (
           <ParetoChart rows={rows} dim={effectiveDim} hueVar={hueVar} mode="line" onDrill={simpleDrill.onDrill} isActive={simpleDrill.isActive} />
         )}

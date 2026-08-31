@@ -8,72 +8,34 @@ import ChartCard from "./components/ChartCard";
 import DistributorTable from "./components/DistributorTable";
 import TableWidget from "./components/TableWidget";
 import RegionTable from "./components/RegionTable";
-import BrandTable from "./components/BrandTable";
+import ClassificationPlaceholder from "./components/ClassificationPlaceholder";
 import Skeleton from "./components/Skeleton";
 
 // ── Chart section definitions ─────────────────────────────────────────────────
+// Kept to the approved design (Dashboard 1 Design & Acceptance Sign-off,
+// TNX.DWH.AnaBatla.SO.01 §3.3) and capped at a handful of widgets total —
+// see the doc for what was deliberately dropped (SKU breakdown, distributor/
+// town concentration, Business Unit mix, and the extra channel/segment/
+// order-source/area-type/region charts this build previously carried beyond
+// what was actually signed off).
 // source: "secondary" → filteredRows  |  "primary" → filteredPrimaryRows
-// Each section groups related charts under a heading.
 
 const CHART_SECTIONS = [
-  // ─────────────────────────────────────────────────────────────────────────
   {
     id:    "trend-section",
-    title: "Sales Trends",
-    desc:  "Day-by-day net sales movement for both data sources",
+    title: "Sales & Channel",
+    desc:  "Day-by-day net sales movement, and channel type mix",
     charts: [
       {
-        id: "trend",
-        title: "Net sales trend (Secondary)",
-        type: "trend",
+        id: "trend-dual",
+        title: "Net sales trend — Primary vs Secondary",
+        type: "dual-trend",
         dim: "date",
-        source: "secondary",
-        hueVar: "--hue-bu",
-        className: "span-2 size-lg",
-        fallbackDim: "brand",
-        fallbackTitle: "Top brands — Secondary",
-        fallbackTopN: 8,
-        summary: "Secondary net sales for each date in scope — shows momentum day to day.",
-        query: "SUM(netSales) grouped by Date (secondary), chronological.",
-        fallbackSummary: "Best-selling brands by secondary net sales. Switches to a trend line once 2+ dates of data exist.",
-        fallbackQuery: "SUM(netSales) grouped by Brand (secondary), top 8.",
-      },
-      {
-        id: "trend-primary",
-        title: "Net sales trend (Primary)",
-        type: "trend",
-        dim: "date",
-        source: "primary",
         hueVar: "--hue-ch",
-        className: "span-2 size-lg",
-        fallbackDim: "brand",
-        fallbackTitle: "Top brands — Primary",
-        fallbackTopN: 8,
-        summary: "Primary (SAP/factory) net sales for each date in scope.",
-        query: "SUM(netSales) grouped by Date (primary), chronological.",
-        fallbackSummary: "Best-selling brands by primary net sales.",
-        fallbackQuery: "SUM(netSales) grouped by Brand (primary), top 8.",
-      },
-    ],
-  },
-
-  // ─────────────────────────────────────────────────────────────────────────
-  {
-    id:    "channel-section",
-    title: "Channel & Segment Analysis",
-    desc:  "How sales split across channel types, segments, sub-channels, and order sources",
-    charts: [
-      {
-        id: "segment-donut",
-        title: "Channel segment mix",
-        type: "doughnut",
-        dim: "segment",
-        source: "secondary",
-        hueVar: "--hue-ch",
-        topN: 6,
-        className: "span-1",
-        summary: "Share of secondary net sales by top-level channel segment (GT / MT / Export / KA …).",
-        query: "SUM(netSales) grouped by Segment (Channel col 0), shown as % of total.",
+        className: "span-2 size-sm",
+        summary:
+          "Daily net sales for both data sources plotted together — solid line is secondary (distributor-to-retailer), dashed line is primary (factory/SAP).",
+        query: "SUM(netSales) grouped by Date, secondary vs primary, chronological.",
       },
       {
         id: "ch",
@@ -83,247 +45,43 @@ const CHART_SECTIONS = [
         source: "secondary",
         hueVar: "--hue-ch",
         topN: 8,
-        className: "span-1 size-sm",
-        summary: "Secondary net sales ranked by channel type — drills into full channel name and sub-channel.",
+        className: "span-2 size-sm",
+        summary: "Secondary net sales ranked by channel type — click a bar to drill into full channel name, then sub-channel.",
         query: "SUM(netSales) grouped by Channel Type (secondary).",
-      },
-      {
-        id: "channel-full",
-        title: "Channel name breakdown",
-        type: "bar-h",
-        dim: "channel",
-        source: "secondary",
-        hueVar: "--hue-ch",
-        topN: 8,
-        className: "span-1 size-sm",
-        summary: "Secondary net sales by full channel name (General Trade, Modern Trade, Wholesale …).",
-        query: "SUM(netSales) grouped by Channel (full name), sorted descending.",
-      },
-      {
-        id: "subch",
-        title: "Sub-channel breakdown",
-        type: "bar-h",
-        dim: "subChannel",
-        source: "secondary",
-        hueVar: "--hue-ch",
-        topN: 8,
-        className: "span-1 size-sm",
-        summary: "Secondary net sales broken down by sub-channel (Small GT, Large GT, Hypermarket …).",
-        query: "SUM(netSales) grouped by Sub Channel (secondary), sorted descending.",
-      },
-      {
-        id: "dist-type",
-        title: "Distributor type mix",
-        type: "doughnut",
-        dim: "distType",
-        source: "secondary",
-        hueVar: "--hue-dist",
-        topN: 6,
-        className: "span-1",
-        summary: "How secondary net sales split across distributor types (DD, SD, Wholesaler …).",
-        query: "SUM(netSales) grouped by Distributor Type, as % of total.",
-      },
-      {
-        id: "order-from",
-        title: "Order source (APP vs WEB)",
-        type: "doughnut",
-        dim: "orderFrom",
-        source: "secondary",
-        hueVar: "--hue-src",
-        topN: 4,
-        className: "span-1",
-        summary: "Split between orders placed via the sales app versus the web portal.",
-        query: "SUM(netSales) grouped by Order Added From (APP / WEB).",
-      },
-      {
-        id: "area-type",
-        title: "Urban vs Rural split",
-        type: "doughnut",
-        dim: "areaType",
-        source: "secondary",
-        hueVar: "--hue-town",
-        topN: 4,
-        className: "span-1",
-        summary: "Share of secondary net sales from urban versus rural outlets.",
-        query: "SUM(netSales) grouped by Area Type (Urban / Rural).",
       },
     ],
   },
 
-  // ─────────────────────────────────────────────────────────────────────────
   {
     id:    "category-brand-section",
-    title: "Category & Brand Breakdown",
+    title: "Category & Brand Performance",
     desc:  "Net sales by product category and brand — primary (factory) and secondary (distributor) side by side",
     charts: [
       {
-        id: "cat-secondary",
-        title: "Net sales by category (Secondary)",
-        type: "bar-h",
+        id: "cat-dual",
+        title: "Net sales by category — Primary vs Secondary",
+        type: "dual-bar-h",
         dim: "cat",
-        source: "secondary",
         hueVar: "--hue-cat",
         topN: 7,
-        className: "span-2 size-md",
-        summary: "Secondary net sales ranked by product category.",
-        query: "SUM(netSales) grouped by Category (secondary), top 7 + Other.",
+        className: "span-2 size-sm",
+        summary: "Category-wise net sales compared side by side across both data sources.",
+        query: "SUM(netSales) grouped by Category, secondary vs primary, top 7 + Other.",
       },
       {
-        id: "cat-primary",
-        title: "Net sales by category (Primary)",
-        type: "bar-h",
-        dim: "cat",
-        source: "primary",
-        hueVar: "--hue-cat",
-        topN: 7,
-        className: "span-2 size-md",
-        summary: "Primary (SAP) net sales ranked by product category (Material Group).",
-        query: "SUM(Value) grouped by Material Group Name (primary), top 7 + Other.",
-      },
-      {
-        id: "cat-share-donut",
-        title: "Category share (Secondary)",
-        type: "doughnut",
-        dim: "cat",
-        source: "secondary",
-        hueVar: "--hue-cat",
-        topN: 6,
-        className: "span-1",
-        summary: "Proportional share of secondary net sales by product category.",
-        query: "SUM(netSales) grouped by Category, as % of total (top 6 + Other).",
-      },
-      {
-        id: "brand-secondary",
-        title: "Top brands by net sales (Secondary)",
-        type: "bar-h",
+        id: "brand-dual",
+        title: "Top brands by net sales — Primary vs Secondary",
+        type: "dual-bar-h",
         dim: "brand",
-        source: "secondary",
         hueVar: "--hue-dist",
-        topN: 8,
-        className: "span-2 size-md",
-        summary: "Secondary net sales ranked by brand.",
-        query: "SUM(netSales) grouped by Brand (secondary), top 8 + Other.",
-      },
-      {
-        id: "brand-primary",
-        title: "Top brands by net sales (Primary)",
-        type: "bar-h",
-        dim: "brand",
-        source: "primary",
-        hueVar: "--hue-dist",
-        topN: 8,
-        className: "span-2 size-md",
-        summary: "Primary (SAP) net sales ranked by brand.",
-        query: "SUM(Value) grouped by Brand (primary), top 8 + Other.",
-      },
-      {
-        id: "brand-share-donut",
-        title: "Brand share (Secondary)",
-        type: "doughnut",
-        dim: "brand",
-        source: "secondary",
-        hueVar: "--hue-dist",
-        topN: 6,
-        className: "span-1",
-        summary: "Proportional share of secondary net sales across top brands.",
-        query: "SUM(netSales) grouped by Brand, as % of total (top 6 + Other).",
-      },
-    ],
-  },
-
-  // ─────────────────────────────────────────────────────────────────────────
-  {
-    id:    "geo-section",
-    title: "Geographic Performance",
-    desc:  "Region-wise and town-level sales distribution from secondary data",
-    charts: [
-      {
-        id: "region-bar",
-        title: "Region-wise net sales",
-        type: "bar-h",
-        dim: "region",
-        source: "secondary",
-        hueVar: "--hue-town",
-        topN: 10,
-        className: "span-2 size-md",
-        summary: "Secondary net sales ranked by region — shows which territory drives the most revenue.",
-        query: "SUM(netSales) grouped by Region (secondary), sorted descending.",
-      },
-      {
-        id: "region-donut",
-        title: "Region share",
-        type: "doughnut",
-        dim: "region",
-        source: "secondary",
-        hueVar: "--hue-town",
-        topN: 6,
-        className: "span-1",
-        summary: "Proportional share of secondary net sales by region.",
-        query: "SUM(netSales) grouped by Region, as % of total.",
-      },
-      {
-        id: "town",
-        title: "Top towns by net sales (Secondary)",
-        type: "bar-h",
-        dim: "town",
-        source: "secondary",
-        hueVar: "--hue-town",
-        topN: 10,
-        className: "span-2 size-md",
-        summary: "Secondary net sales ranked by town — geographic revenue concentration.",
-        query: "SUM(netSales) grouped by Town (secondary), top 10 + Other.",
-      },
-      {
-        id: "town-primary",
-        title: "Top towns by net sales (Primary)",
-        type: "bar-h",
-        dim: "town",
-        source: "primary",
-        hueVar: "--hue-town",
-        topN: 10,
-        className: "span-2 size-md",
-        summary: "Primary (SAP) net sales ranked by town/city.",
-        query: "SUM(Value) grouped by City (primary), top 10 + Other.",
-      },
-    ],
-  },
-
-  // ─────────────────────────────────────────────────────────────────────────
-  {
-    id:    "primary-section",
-    title: "Primary Sales Breakdown",
-    desc:  "SAP / factory-level analysis by customer group and segment",
-    charts: [
-      {
-        id: "pri-segment-bar",
-        title: "Customer group (Primary)",
-        type: "bar-h",
-        dim: "segment",
-        source: "primary",
-        hueVar: "--hue-bu",
         topN: 8,
         className: "span-2 size-sm",
-        summary: "Primary net sales by Customer Group 2 (Q-Commerce, LMT, E-Commerce, Direct Sales …). GT/Export/MT mapping pending Irqam confirmation.",
-        query: "SUM(Value) grouped by Customer Group2 Name (primary), sorted descending.",
-      },
-      {
-        id: "pri-segment-donut",
-        title: "Customer group share (Primary)",
-        type: "doughnut",
-        dim: "segment",
-        source: "primary",
-        hueVar: "--hue-bu",
-        topN: 6,
-        className: "span-1",
-        summary: "Share of primary net sales across customer group types.",
-        query: "SUM(Value) grouped by Customer Group2 Name, as % of total.",
+        summary: "Brand-wise net sales compared side by side across both data sources.",
+        query: "SUM(netSales) grouped by Brand, secondary vs primary, top 8 + Other.",
       },
     ],
   },
 ];
-
-// Flatten all chart defs for easy lookup
-const ALL_CHARTS = CHART_SECTIONS.flatMap((s) => s.charts);
 
 function SectionBlock({ section, filteredRows, filteredPrimaryRows }) {
   return (
@@ -336,6 +94,7 @@ function SectionBlock({ section, filteredRows, filteredPrimaryRows }) {
       </div>
       <div className="chart-grid">
         {section.charts.map((def) => {
+          const isDual = def.type === "dual-bar-h" || def.type === "dual-trend";
           const rows = def.source === "primary" ? filteredPrimaryRows : filteredRows;
           return (
             <ChartCard
@@ -346,6 +105,8 @@ function SectionBlock({ section, filteredRows, filteredPrimaryRows }) {
               hueVar={def.hueVar}
               topN={def.topN}
               rows={rows}
+              secondaryRows={isDual ? filteredRows : undefined}
+              primaryRows={isDual ? filteredPrimaryRows : undefined}
               className={def.className}
               chartWidth={def.chartWidth}
               labelChars={def.labelChars}
@@ -366,8 +127,8 @@ function SectionBlock({ section, filteredRows, filteredPrimaryRows }) {
 }
 
 function Dashboard() {
-  const { meta, secondaryRows } = useData();
-  const { filteredRows, filteredPrimaryRows } = useFilters();
+  const { meta, secondaryRows, primaryRows } = useData();
+  const { filteredRows, filteredPrimaryRows, filters } = useFilters();
   const options = meta?.dimensions || {};
 
   return (
@@ -379,6 +140,8 @@ function Dashboard() {
           primaryRows={filteredPrimaryRows}
           options={options}
           allSecondaryRows={secondaryRows}
+          allPrimaryRows={primaryRows}
+          filters={filters}
         />
       </section>
 
@@ -401,17 +164,18 @@ function Dashboard() {
           </div>
         </div>
         <RegionTable rows={filteredRows} />
-        <div style={{ marginTop: 14 }}>
-          <BrandTable rows={filteredRows} primaryRows={filteredPrimaryRows} />
-        </div>
-        <div style={{ marginTop: 14 }}>
+      </section>
+
+      <section className="section">
+        <div className="table-row-2">
           <DistributorTable rows={filteredRows} />
+          <TableWidget rows={filteredRows} />
         </div>
       </section>
 
-      {/* ── Transaction Detail ── */}
+      {/* ── Classification-wise Productivity & Sales (reserved, OP-02) ── */}
       <section className="section">
-        <TableWidget rows={filteredRows} />
+        <ClassificationPlaceholder />
       </section>
 
       <footer className="credit">

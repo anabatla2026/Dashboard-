@@ -88,7 +88,7 @@ export default function TableWidget({ rows }) {
           }}
         />
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap wide">
         <table>
           <thead>
             <tr>

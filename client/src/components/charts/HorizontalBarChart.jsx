@@ -2,12 +2,12 @@ import { compact, moneyFull, niceMax, truncate } from "../../lib/format";
 import { roundedRightPath, extrudeFaces } from "../../lib/svgPath";
 import { useTooltip } from "../../context/TooltipContext";
 
-const ROW_H = 32,
-  BAR_H = 15,
-  MARGIN_T = 10,
-  MARGIN_B = 24;
-const DX = 7,
-  DY = -6;
+const ROW_H = 24,
+  BAR_H = 11,
+  MARGIN_T = 8,
+  MARGIN_B = 18;
+const DX = 6,
+  DY = -5;
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();

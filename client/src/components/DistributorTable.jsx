@@ -3,15 +3,16 @@ import { compact, num, pct } from "../lib/format";
 import WidgetInfo from "./WidgetInfo";
 
 const COLS = [
-  { key: "rank", label: "#", type: "num" },
-  { key: "dist", label: "Distributor", type: "str" },
-  { key: "netSales", label: "Net sales", type: "num" },
-  { key: "share", label: "Share", type: "num" },
-  { key: "volume", label: "Volume (T)", type: "num" },
-  { key: "units", label: "Units", type: "num" },
-  { key: "invoices", label: "Invoices", type: "num" },
-  { key: "outlets", label: "Outlets", type: "num" },
-  { key: "avgInvoice", label: "Avg invoice", type: "num" },
+  { key: "rank",       label: "#",            type: "num",     width: "6%" },
+  { key: "dist",       label: "Distributor",  type: "str",     width: "19%" },
+  { key: "target",     label: "Target",       type: "pending", width: "10%" },
+  { key: "volume",     label: "Volume (CTN)", type: "num",     width: "9%" },
+  { key: "netSales",   label: "Value",        type: "num",     width: "10%" },
+  { key: "volShare",   label: "Volume %",     type: "num",     width: "8%" },
+  { key: "share",      label: "Value %",      type: "num",     width: "8%" },
+  { key: "outlets",    label: "Total outlets",type: "num",     width: "10%" },
+  { key: "prodOutlets",label: "Prod. outlets",type: "pending", width: "10%" },
+  { key: "avgDrop",    label: "Drop size",    type: "num",     width: "10%" },
 ];
 
 function aggregate(rows) {
@@ -19,26 +20,25 @@ function aggregate(rows) {
   for (const r of rows) {
     let e = map.get(r.dist);
     if (!e) {
-      e = { dist: r.dist, netSales: 0, volume: 0, units: 0, invoiceSet: new Set(), outletSet: new Set() };
+      e = { dist: r.dist, netSales: 0, volume: 0, outletSet: new Set() };
       map.set(r.dist, e);
     }
-    e.netSales += r.netSales;
-    e.volume += r.volume;
-    e.units += r.units;
-    e.invoiceSet.add(r.invoice);
+    e.netSales += r.netSales || 0;
+    e.volume += r.salesCtn || 0;
     e.outletSet.add(r.outletCode);
   }
-  const total = Array.from(map.values()).reduce((s, e) => s + e.netSales, 0);
-  return Array.from(map.values())
+  const list = Array.from(map.values());
+  const totalSales = list.reduce((s, e) => s + e.netSales, 0);
+  const totalVolume = list.reduce((s, e) => s + e.volume, 0);
+  return list
     .map((e) => ({
       dist: e.dist,
       netSales: e.netSales,
-      volume: e.volume,
-      units: e.units,
-      invoices: e.invoiceSet.size,
+      volume: Math.round(e.volume),
       outlets: e.outletSet.size,
-      avgInvoice: e.invoiceSet.size > 0 ? e.netSales / e.invoiceSet.size : 0,
-      share: total > 0 ? (e.netSales / total) * 100 : 0,
+      avgDrop: e.outletSet.size > 0 ? e.netSales / e.outletSet.size : 0,
+      share: totalSales > 0 ? (e.netSales / totalSales) * 100 : 0,
+      volShare: totalVolume > 0 ? (e.volume / totalVolume) * 100 : 0,
     }))
     .sort((a, b) => b.netSales - a.netSales);
 }
@@ -59,7 +59,7 @@ export default function DistributorTable({ rows }) {
   }, [data, sortKey, sortDir]);
 
   function onSort(col) {
-    if (col.key === "dist") return;
+    if (col.type !== "num") return;
     if (sortKey === col.key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
       setSortKey(col.key);
@@ -71,28 +71,30 @@ export default function DistributorTable({ rows }) {
     <div className="widget">
       <div className="widget-head">
         <div>
-          <div className="widget-title">Distributor performance</div>
-          <div className="widget-sub">Ranked leaderboard for the current filter scope</div>
+          <div className="widget-title">Distributor Performance</div>
+          <div className="widget-sub">
+            Ranked for the current filter scope <span className="kpi-badge kpi-badge--pending">Target &amp; productive outlets pending</span>
+          </div>
         </div>
         <div className="widget-controls">
           <WidgetInfo
-            title="Distributor performance"
-            summary="Every distributor with at least one matching sale, ranked by net sales, with the metrics that explain that ranking — volume, units, invoice count, outlets served, and average invoice value."
-            query="Grouped by Distributor: SUM(netSales), SUM(volume), SUM(units), COUNT(DISTINCT invoice), COUNT(DISTINCT outletCode); avg invoice = netSales ÷ invoices; share = netSales ÷ SUM(netSales) across all distributors in scope."
-            tip="Click any column header to sort by it."
+            title="Distributor Performance"
+            summary="Every distributor with at least one matching sale, ranked by value, with volume, value/volume share, outlets served, and drop size. Target and Productive Outlets are reserved columns — Target needs a per-distributor target list, and Productive Outlets needs a master outlet roster to compute the served/total ratio against."
+            query="Grouped by Distributor: SUM(netSales), SUM(salesCtn), COUNT(DISTINCT outletCode); drop size = netSales ÷ outlets; value %/volume % = share of the totals across all distributors in scope."
+            tip="Click any numeric column header to sort by it."
           />
         </div>
       </div>
-      <div className="table-wrap" style={{ margin: "12px 16px 16px" }}>
+      <div className="table-wrap" style={{ margin: "10px 14px 14px" }}>
         <table>
           <thead>
             <tr>
               {COLS.map((c) => (
                 <th
                   key={c.key}
-                  className={c.type === "num" ? "num" : ""}
+                  className={c.type === "num" ? "num" : c.type === "pending" ? "num muted" : ""}
                   onClick={() => onSort(c)}
-                  style={c.key === "dist" ? { cursor: "default" } : undefined}
+                  style={{ width: c.width, cursor: c.type !== "num" ? "default" : undefined }}
                 >
                   {c.label}
                   <span className="arrow">{sortKey === c.key ? (sortDir === "asc" ? "↑" : "↓") : ""}</span>
@@ -105,18 +107,19 @@ export default function DistributorTable({ rows }) {
               <tr key={r.dist}>
                 <td className="num">{i + 1}</td>
                 <td className="strong">{r.dist}</td>
+                <td className="num muted">Pending</td>
+                <td className="num">{num(r.volume)}</td>
                 <td className="num">
                   <div className="rank-bar-wrap">
                     <div className="rank-bar" style={{ width: (r.netSales / maxNetSales) * 100 + "%" }} />
                     <span>{compact(r.netSales)}</span>
                   </div>
                 </td>
+                <td className="num">{pct(r.volShare)}</td>
                 <td className="num">{pct(r.share)}</td>
-                <td className="num">{r.volume.toFixed(2)}</td>
-                <td className="num">{num(r.units)}</td>
-                <td className="num">{num(r.invoices)}</td>
                 <td className="num">{num(r.outlets)}</td>
-                <td className="num">{compact(r.avgInvoice)}</td>
+                <td className="num muted">Pending</td>
+                <td className="num">{compact(r.avgDrop)}</td>
               </tr>
             ))}
             {sorted.length === 0 && (

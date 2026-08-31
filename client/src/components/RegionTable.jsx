@@ -3,14 +3,15 @@ import { compact, num, pct } from "../lib/format";
 import WidgetInfo from "./WidgetInfo";
 
 const COLS = [
-  { key: "rank",     label: "#",            type: "num" },
-  { key: "region",   label: "Region",       type: "str" },
-  { key: "netSales", label: "Net sales",    type: "num" },
-  { key: "share",    label: "Share",        type: "num" },
-  { key: "salesCtn", label: "Volume (CTN)", type: "num" },
-  { key: "outlets",  label: "Outlets",      type: "num" },
-  { key: "dists",    label: "Distributors", type: "num" },
-  { key: "avgDrop",  label: "Drop size",    type: "num" },
+  { key: "rank",     label: "#",            type: "num",     width: "6%" },
+  { key: "region",   label: "Region",       type: "str",     width: "15%" },
+  { key: "target",   label: "Target",       type: "pending", width: "11%" },
+  { key: "netSales", label: "Sec. sales",   type: "num",     width: "15%" },
+  { key: "ach",      label: "Ach. %",       type: "pending", width: "9%" },
+  { key: "share",    label: "Share",        type: "num",     width: "9%" },
+  { key: "salesCtn", label: "Volume (CTN)", type: "num",     width: "12%" },
+  { key: "outlets",  label: "Outlets",      type: "num",     width: "10%" },
+  { key: "avgDrop",  label: "Drop size",    type: "num",     width: "13%" },
 ];
 
 function aggregate(rows) {
@@ -59,7 +60,7 @@ export default function RegionTable({ rows }) {
   }, [data, sortKey, sortDir]);
 
   function onSort(col) {
-    if (col.key === "region") return;
+    if (col.type !== "num") return;
     if (sortKey === col.key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(col.key); setSortDir("desc"); }
   }
@@ -68,28 +69,30 @@ export default function RegionTable({ rows }) {
     <div className="widget">
       <div className="widget-head">
         <div>
-          <div className="widget-title">Region-wise performance</div>
-          <div className="widget-sub">Secondary sales aggregated by region</div>
+          <div className="widget-title">Region-wise Targets &amp; Achievement</div>
+          <div className="widget-sub">
+            Secondary sales by region <span className="kpi-badge kpi-badge--pending">Target pending</span>
+          </div>
         </div>
         <div className="widget-controls">
           <WidgetInfo
-            title="Region-wise performance"
-            summary="Secondary net sales, volume (cartons), outlets served, active distributors, and average drop size grouped by region."
-            query="Grouped by Region: SUM(netSales), SUM(salesCtn), COUNT(DISTINCT outletCode), COUNT(DISTINCT dist); drop size = netSales ÷ outlets."
+            title="Region-wise Targets & Achievement"
+            summary="Secondary net sales, volume, outlets served, and drop size grouped by region. Target and Achievement % are reserved columns — populated once region-wise targets are supplied. Primary sales aren't broken out here: the primary export has no region field, only City."
+            query="Grouped by Region: SUM(netSales), SUM(salesCtn), COUNT(DISTINCT outletCode); drop size = netSales ÷ outlets. Achievement % = netSales ÷ Target, once Target is available."
             tip="Click any numeric column header to sort."
           />
         </div>
       </div>
-      <div className="table-wrap" style={{ margin: "12px 16px 16px" }}>
+      <div className="table-wrap" style={{ margin: "10px 14px 14px" }}>
         <table>
           <thead>
             <tr>
               {COLS.map((c) => (
                 <th
                   key={c.key}
-                  className={c.type === "num" ? "num" : ""}
+                  className={c.type === "num" ? "num" : c.type === "pending" ? "num muted" : ""}
                   onClick={() => onSort(c)}
-                  style={c.key === "region" ? { cursor: "default" } : undefined}
+                  style={{ width: c.width, cursor: c.type !== "num" ? "default" : undefined }}
                 >
                   {c.label}
                   <span className="arrow">{sortKey === c.key ? (sortDir === "asc" ? "↑" : "↓") : ""}</span>
@@ -102,16 +105,17 @@ export default function RegionTable({ rows }) {
               <tr key={r.region}>
                 <td className="num">{i + 1}</td>
                 <td className="strong">{r.region}</td>
+                <td className="num muted">Pending</td>
                 <td className="num">
                   <div className="rank-bar-wrap">
                     <div className="rank-bar" style={{ width: maxVal > 0 ? (r.netSales / maxVal) * 100 + "%" : "0%" }} />
                     <span>{compact(r.netSales)}</span>
                   </div>
                 </td>
+                <td className="num muted">—</td>
                 <td className="num">{pct(r.share)}</td>
                 <td className="num">{num(r.salesCtn)}</td>
                 <td className="num">{num(r.outlets)}</td>
-                <td className="num">{num(r.dists)}</td>
                 <td className="num">{compact(r.avgDrop)}</td>
               </tr>
             ))}

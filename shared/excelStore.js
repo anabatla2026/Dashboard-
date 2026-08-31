@@ -91,7 +91,7 @@ const SEC_NUMERIC_FIELDS = new Set(["year", "salesCtn", "units", "volume", "disc
 const SEC_DIMENSIONS = [
   "segment", "region", "dist", "town", "distType", "chType", "channel",
   "subChannel", "bu", "cat", "brand", "orderFrom", "areaType", "filerType",
-  "year", "month", "date",
+  "appUser", "year", "month", "date",
 ];
 
 // ── Primary (SAP / factory export) ─────────────────────────────────────────

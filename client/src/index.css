@@ -79,7 +79,7 @@ body {
   background: var(--page);
   color: var(--text-primary);
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 14px;
+  font-size: 11px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
@@ -229,7 +229,7 @@ button {
 .header-inner {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 16px 24px;
+  padding: 10px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -242,9 +242,9 @@ button {
   gap: 10px;
 }
 .brand-mark {
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
   background: var(--accent-gradient);
   box-shadow: var(--shadow-glow);
   display: flex;
@@ -252,7 +252,7 @@ button {
   justify-content: center;
   color: #fff;
   font-weight: 800;
-  font-size: 14px;
+  font-size: 11px;
   flex-shrink: 0;
   letter-spacing: -0.02em;
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
@@ -271,13 +271,13 @@ button {
   transform: rotate(-6deg) scale(1.08);
 }
 .brand-text h1 {
-  font-size: 19px;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: -0.02em;
   font-family: "Manrope", sans-serif;
 }
 .brand-text .sub {
-  font-size: 11.5px;
+  font-size: 9px;
   color: var(--text-muted);
   font-weight: 500;
 }
@@ -290,7 +290,7 @@ button {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: 9.5px;
   color: var(--text-secondary);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -339,7 +339,7 @@ button {
 .icon-btn.wide {
   width: auto;
   padding: 0 12px;
-  font-size: 12.5px;
+  font-size: 10px;
   font-weight: 600;
 }
 .icon-btn svg {
@@ -368,7 +368,7 @@ button {
 .filterbar-row {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 10px 24px;
+  padding: 7px 20px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -400,7 +400,7 @@ button {
   border: 1px dashed var(--border-strong);
   background: none;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 9.5px;
   font-weight: 600;
   padding: 7px 12px;
   border-radius: 8px;
@@ -413,7 +413,7 @@ button {
 }
 .filterbar-count {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 9.5px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -438,12 +438,12 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 12px;
+  padding: 5px 10px;
   border-radius: 20px;
   border: 1px solid var(--border-strong);
   background: color-mix(in srgb, var(--surface-2) 80%, transparent);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: 10px;
   font-weight: 600;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
@@ -470,7 +470,7 @@ button {
   background: color-mix(in srgb, var(--accent-ink) 28%, transparent);
   color: var(--accent-ink);
   border-radius: 20px;
-  font-size: 10.5px;
+  font-size: 8px;
   font-weight: 700;
   padding: 1px 6px;
   line-height: 1.4;
@@ -498,7 +498,7 @@ button {
   border: 1px solid var(--border-strong);
   background: var(--page);
   color: var(--text-primary);
-  font-size: 12.5px;
+  font-size: 10px;
   margin-bottom: 6px;
 }
 .dim-filter-actions {
@@ -510,7 +510,7 @@ button {
   background: none;
   border: none;
   color: var(--accent);
-  font-size: 11.5px;
+  font-size: 9px;
   font-weight: 600;
   cursor: pointer;
   padding: 0;
@@ -528,7 +528,7 @@ button {
   padding: 6px 6px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: 10px;
 }
 .dim-filter-opt:hover {
   background: var(--surface-hover);
@@ -546,30 +546,57 @@ button {
 }
 .dim-filter-empty {
   padding: 10px 6px;
-  font-size: 12px;
+  font-size: 9.5px;
   color: var(--text-muted);
   text-align: center;
 }
 
+/* Both cards stretch to the taller sibling's height instead of each hugging
+   its own row count — otherwise a 3-row table sits next to a 19-row one and
+   the row looks lopsided (one tiny card, one tall scrolling card). */
+.table-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: stretch;
+}
+.table-row-2 > .widget {
+  display: flex;
+  flex-direction: column;
+  /* Without this, a wide table (Transaction Detail's min-width: 980px)
+     blows out its grid track past the 1fr split and crushes its sibling
+     column instead of scrolling within its own half. */
+  min-width: 0;
+}
+.table-row-2 > .widget .table-wrap {
+  flex: 1;
+  min-height: 0;
+}
+@media (max-width: 1080px) {
+  .table-row-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---------- Section heads ---------- */
 .section {
-  margin-top: 28px;
+  margin-top: 18px;
 }
 .section-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   flex-wrap: wrap;
 }
 .section-head h2 {
-  font-size: 17px;
+  font-size: 13.5px;
   font-weight: 800;
   letter-spacing: -0.01em;
 }
 .section-head .desc {
-  font-size: 12px;
+  font-size: 9.5px;
   color: var(--text-muted);
   margin-top: 2px;
 }
@@ -594,10 +621,10 @@ button {
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px 16px 0;
+  padding: 10px 12px 0;
 }
 .widget-title {
-  font-size: 14.5px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.005em;
@@ -615,7 +642,7 @@ button {
   flex-shrink: 0;
 }
 .widget-sub {
-  font-size: 11.5px;
+  font-size: 9px;
   color: var(--text-muted);
   margin-top: 2px;
 }
@@ -640,7 +667,7 @@ button {
 }
 .crumb-sep {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 8.5px;
   margin: 0 1px;
   opacity: 0.6;
 }
@@ -649,7 +676,7 @@ button {
   border: none;
   padding: 2px 5px;
   border-radius: 5px;
-  font-size: 11.5px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--text-muted);
   cursor: pointer;
@@ -669,7 +696,7 @@ button {
 }
 .crumb-current {
   padding: 2px 5px;
-  font-size: 11.5px;
+  font-size: 9px;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -766,7 +793,7 @@ button {
   gap: 12px;
 }
 .modal-head h3 {
-  font-size: 16px;
+  font-size: 12.5px;
   font-weight: 800;
   font-family: "Manrope", sans-serif;
   letter-spacing: -0.01em;
@@ -781,7 +808,7 @@ button {
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
   color: var(--text-secondary);
-  font-size: 18px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
   flex-shrink: 0;
@@ -803,7 +830,7 @@ button {
   gap: 6px;
 }
 .modal-label {
-  font-size: 10.5px;
+  font-size: 8px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -811,13 +838,13 @@ button {
 }
 .modal-section p {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 10.5px;
   line-height: 1.55;
   color: var(--text-secondary);
 }
 .modal-query {
   display: block;
-  font-size: 12px;
+  font-size: 9.5px;
   line-height: 1.6;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color: var(--text-primary);
@@ -831,7 +858,7 @@ button {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 12px;
+  font-size: 9.5px;
   line-height: 1.5;
   color: var(--text-secondary);
   background: var(--accent-wash);
@@ -848,111 +875,126 @@ button {
 }
 
 /* ---------- KPI widget ---------- */
+/* A real grid, not flex-wrap — flex-wrap sized each row's tiles off that
+   row's own content, so row widths didn't line up with the row above it.
+   A fixed column count keeps every tile the same width on every row. */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 1px;
   background: var(--border);
   border-radius: 0 0 18px 18px;
   overflow: hidden;
-  margin-top: 14px;
+  margin-top: 6px;
 }
 .kpi-tile {
   position: relative;
   background: color-mix(in srgb, var(--surface) 70%, transparent);
-  padding: 18px 18px 16px;
+  padding: 6px 9px 6px;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 2px;
   overflow: hidden;
-}
-.kpi-tile::before {
-  content: "";
-  position: absolute;
-  top: -40%;
-  right: -30%;
-  width: 65%;
-  height: 140%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--tile-hue, var(--accent)) 20%, transparent), transparent 70%);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  pointer-events: none;
-}
-.kpi-tile:hover::before {
-  opacity: 1;
+  min-width: 0;
 }
 .kpi-tile.hero {
   background: linear-gradient(165deg, var(--accent-wash), color-mix(in srgb, var(--surface) 70%, transparent) 75%);
 }
+.kpi-top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  position: relative;
+}
 .kpi-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--tile-hue, var(--accent));
-  background: color-mix(in srgb, var(--tile-hue, var(--accent)) 16%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tile-hue, var(--accent)) 22%, transparent) inset,
-    0 4px 14px -2px color-mix(in srgb, var(--tile-hue, var(--accent)) 45%, transparent);
-  margin-bottom: 2px;
-  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s ease;
+  flex-shrink: 0;
 }
 .kpi-icon svg {
-  width: 17px;
-  height: 17px;
-}
-.kpi-tile:hover .kpi-icon {
-  transform: scale(1.12) rotate(-5deg);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tile-hue, var(--accent)) 30%, transparent) inset,
-    0 6px 20px -2px color-mix(in srgb, var(--tile-hue, var(--accent)) 65%, transparent);
+  width: 12px;
+  height: 12px;
 }
 .kpi-label {
-  font-size: 11px;
+  font-size: 8px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   color: var(--text-muted);
-  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 .kpi-value {
-  font-size: 27px;
+  font-size: 14.5px;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   color: var(--text-primary);
   position: relative;
   font-family: "Manrope", sans-serif;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .kpi-tile.hero .kpi-value {
-  font-size: 40px;
+  font-size: 16.5px;
   background: var(--accent-gradient);
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
-  filter: drop-shadow(0 2px 18px color-mix(in srgb, var(--accent) 35%, transparent));
 }
-.kpi-sub {
+.kpi-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   position: relative;
 }
 .kpi-sub {
-  font-size: 11.5px;
+  font-size: 8.5px;
   color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.goly-badge {
+  font-size: 8px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0.01em;
+}
+.goly-up {
+  color: var(--good);
+}
+.goly-down {
+  color: var(--hue-risk);
+}
+.goly-na {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-style: italic;
 }
 
 /* KPI section divider labels (Primary Sales / Secondary Sales / Segment-wise) */
 .kpi-section-label {
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
-  padding: 14px 18px 0;
+  padding: 9px 14px 0;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 .kpi-badge {
-  font-size: 9.5px;
+  font-size: 8px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -961,6 +1003,8 @@ button {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .kpi-badge--pending {
   background: color-mix(in srgb, orange 12%, transparent);
@@ -972,7 +1016,7 @@ button {
 .chart-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
+  gap: 8px;
 }
 .chart-grid .span-1 {
   grid-column: span 1;
@@ -990,8 +1034,8 @@ button {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 280px;
-  padding-bottom: 14px;
+  min-height: 180px;
+  padding-bottom: 8px;
   overflow: hidden;
 }
 .chart-card::after {
@@ -1010,13 +1054,13 @@ button {
   left: 130%;
 }
 .chart-card.size-sm {
-  min-height: 250px;
+  min-height: 150px;
 }
 .chart-card.size-md {
-  min-height: 300px;
+  min-height: 190px;
 }
 .chart-card.size-lg {
-  min-height: 380px;
+  min-height: 230px;
 }
 .chart-card::before {
   content: "";
@@ -1035,7 +1079,7 @@ button {
   display: flex;
   align-items: stretch;
   min-height: 0;
-  padding: 8px 12px 0;
+  padding: 6px 10px 0;
 }
 .chart-body svg {
   width: 100%;
@@ -1086,7 +1130,7 @@ button {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11.5px;
+  font-size: 9px;
   animation: fadeUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
   animation-delay: calc(var(--i, 0) * 40ms);
 }
@@ -1120,7 +1164,7 @@ button {
 .chart-empty {
   margin: auto;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 10px;
 }
 .trend-single {
   margin: auto;
@@ -1130,7 +1174,7 @@ button {
 }
 .trend-single-value {
   font-family: "Manrope", sans-serif;
-  font-size: 40px;
+  font-size: 31.5px;
   font-weight: 800;
   background: var(--accent-gradient);
   background-clip: text;
@@ -1139,13 +1183,13 @@ button {
   letter-spacing: -0.01em;
 }
 .trend-single-label {
-  font-size: 13px;
+  font-size: 10.5px;
   font-weight: 600;
   color: var(--text-secondary);
   margin-top: 4px;
 }
 .trend-single-note {
-  font-size: 12px;
+  font-size: 9.5px;
   color: var(--text-muted);
   margin-top: 12px;
   line-height: 1.5;
@@ -1155,7 +1199,7 @@ button {
   border: 1px solid var(--border);
   padding: 1px 6px;
   border-radius: 5px;
-  font-size: 11.5px;
+  font-size: 9px;
 }
 
 .bandgroup {
@@ -1226,7 +1270,7 @@ button {
   color: var(--accent-ink);
   border: none;
   border-radius: 20px;
-  font-size: 10.5px;
+  font-size: 8px;
   font-weight: 700;
   padding: 4px 8px 4px 10px;
   cursor: pointer;
@@ -1236,7 +1280,7 @@ button {
   animation: popIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .drill-chip-x {
-  font-size: 13px;
+  font-size: 10.5px;
   line-height: 1;
   opacity: 0.85;
 }
@@ -1245,7 +1289,7 @@ button {
 }
 .axis-label,
 .tick-label {
-  font-size: 9.5px;
+  font-size: 8px;
   fill: var(--text-muted);
   font-family: "Inter", sans-serif;
   transition: fill 0.15s ease;
@@ -1255,7 +1299,7 @@ button {
   font-weight: 700;
 }
 .value-label {
-  font-size: 10.5px;
+  font-size: 8px;
   fill: var(--text-secondary);
   font-weight: 700;
   font-family: "Inter", sans-serif;
@@ -1317,7 +1361,7 @@ button {
   border-radius: 11px;
   padding: 9px 12px;
   box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.16);
-  font-size: 12px;
+  font-size: 9.5px;
   max-width: 230px;
 }
 .tooltip .tt-cat {
@@ -1335,13 +1379,13 @@ button {
 }
 .tooltip .tt-val {
   font-weight: 700;
-  font-size: 13.5px;
+  font-size: 10.5px;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
 .tooltip .tt-pct {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 8.5px;
   margin-left: 5px;
   font-weight: 500;
 }
@@ -1362,7 +1406,7 @@ button {
   border: 1px solid var(--border-strong);
   background: var(--surface-2);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 10.5px;
 }
 .search-input::placeholder {
   color: var(--text-muted);
@@ -1377,8 +1421,16 @@ button {
 table {
   border-collapse: collapse;
   width: 100%;
+  table-layout: fixed;
+  font-size: 10px;
+}
+/* Transaction Detail alone has enough columns (and long text — SKU, brand,
+   town…) that squeezing it to fit is worse than a horizontal scrollbar. The
+   summary tables (region/distributor) stay fluid via table-layout: fixed
+   above, so two fit side by side with no scrolling. */
+.table-wrap.wide table {
+  table-layout: auto;
   min-width: 980px;
-  font-size: 12.6px;
 }
 thead th {
   position: sticky;
@@ -1389,9 +1441,11 @@ thead th {
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
-  font-size: 10.6px;
-  letter-spacing: 0.04em;
-  padding: 10px 12px;
+  font-size: 8px;
+  letter-spacing: 0.02em;
+  padding: 6px 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   border-bottom: 1px solid var(--border-strong);
   cursor: pointer;
   white-space: nowrap;
@@ -1410,7 +1464,7 @@ thead th .arrow {
   opacity: 0.7;
 }
 tbody td {
-  padding: 9px 12px;
+  padding: 5px 7px;
   border-bottom: 1px solid var(--border);
   color: var(--text-secondary);
   white-space: nowrap;
@@ -1421,6 +1475,10 @@ tbody td {
 tbody td.strong {
   color: var(--text-primary);
   font-weight: 600;
+}
+tbody td.muted {
+  color: var(--text-muted);
+  font-style: italic;
 }
 tbody tr:hover td {
   background: var(--accent-wash);
@@ -1433,7 +1491,7 @@ tbody tr:last-child td {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  min-width: 90px;
+  width: 100%;
 }
 .rank-bar-wrap span {
   position: relative;
@@ -1454,7 +1512,7 @@ tbody tr:last-child td {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px 16px;
-  font-size: 12.5px;
+  font-size: 10px;
   color: var(--text-muted);
   flex-wrap: wrap;
   gap: 10px;
@@ -1475,7 +1533,7 @@ tbody tr:last-child td {
   padding: 6px 11px;
   border-radius: 7px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: 10px;
   font-weight: 600;
 }
 .pager button:disabled {
@@ -1504,28 +1562,28 @@ tbody tr:last-child td {
   padding: 24px;
 }
 .center-state h2 {
-  font-size: 16px;
+  font-size: 12.5px;
 }
 .center-state code {
   background: var(--surface-2);
   border: 1px solid var(--border);
   padding: 2px 7px;
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: 10px;
 }
 
 footer.credit {
   margin-top: 40px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
-  font-size: 11.5px;
+  font-size: 9px;
   color: var(--text-muted);
   text-align: center;
 }
 
 @media (max-width: 1080px) {
   .kpi-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
   .chart-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -1747,7 +1805,7 @@ footer.credit {
   transition: d 0.45s cubic-bezier(0.16, 1, 0.3, 1), fill 0.2s ease;
 }
 .hbar-label {
-  font-size: 10.5px;
+  font-size: 8px;
   fill: var(--text-secondary);
 }
 .pt-mark {

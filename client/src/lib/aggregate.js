@@ -16,6 +16,41 @@ export function cumulativeShare(rows, key) {
   });
 }
 
+// Same idea as aggregateTop but merges two row sets (e.g. secondary +
+// primary) sharing a dimension key into one label list, so a chart can show
+// both series side by side for direct comparison.
+export function aggregateDualTop(secRows, priRows, key, topN) {
+  const secMap = new Map();
+  for (const r of secRows) {
+    if (r[key] == null || r[key] === "") continue;
+    secMap.set(r[key], (secMap.get(r[key]) || 0) + (r.netSales || 0));
+  }
+  const priMap = new Map();
+  for (const r of priRows) {
+    if (r[key] == null || r[key] === "") continue;
+    priMap.set(r[key], (priMap.get(r[key]) || 0) + (r.netSales || 0));
+  }
+
+  const labels = new Set([...secMap.keys(), ...priMap.keys()]);
+  let arr = Array.from(labels, (label) => ({
+    label,
+    secondary: secMap.get(label) || 0,
+    primary: priMap.get(label) || 0,
+  }));
+  arr.sort((a, b) => b.secondary + b.primary - (a.secondary + a.primary));
+
+  if (arr.length > topN) {
+    const head = arr.slice(0, topN);
+    const rest = arr.slice(topN).reduce(
+      (acc, r) => ({ secondary: acc.secondary + r.secondary, primary: acc.primary + r.primary }),
+      { secondary: 0, primary: 0 }
+    );
+    if (rest.secondary + rest.primary > 0) head.push({ label: "Other", ...rest, isOther: true });
+    arr = head;
+  }
+  return arr;
+}
+
 export function aggregateTop(rows, key, topN) {
   const map = new Map();
   for (const r of rows) {
