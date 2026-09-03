@@ -1,21 +1,16 @@
 import { useData } from "../context/DataContext";
 import { useAnimatedNumber } from "../hooks/useAnimatedNumber";
-import { money, num, pct } from "../lib/format";
-import { calcGoly, calcYtdGoly, formatPeriod } from "../lib/period";
-import { WalletIcon, BoxIcon, TagIcon, TruckIcon, MapPinIcon } from "./Icons";
+import { money, num } from "../lib/format";
+import { resolvePeriod, calcGoly, calcYtdGoly, periodDistinct, ytdDistinct, formatPeriod } from "../lib/period";
+import { WalletIcon, BoxIcon } from "./Icons";
 import WidgetInfo from "./WidgetInfo";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-function sumField(rows, key) {
-  return rows.reduce((s, r) => s + (r[key] || 0), 0);
-}
-
-function distinctCount(rows, key) {
-  return new Set(rows.map((r) => r[key])).size;
-}
-
-// ── Animated number wrappers ─────────────────────────────────────────────────
+// Per MOM 2026-09-02 §1: KPI cards split into YTD/MTD × Primary/Secondary,
+// each showing Sales Value (PKR), Volume in Carton, Volume in Pcs, Total
+// Store Count, Productive Store Count, and Productive Distributor — with
+// volumes captured period-wise, not just cumulative. Built as 4 compact
+// stat-cards rather than ~24 separate tiles, per the same doc's own review
+// note capping a dashboard at 6–9 visuals.
 
 function GolyBadge({ goly }) {
   if (!goly) return null;
@@ -28,189 +23,137 @@ function GolyBadge({ goly }) {
   );
 }
 
-function KpiTile({ label, value, sub, icon: Icon, hue, hero, summary, query, badge, goly }) {
+function StatRow({ label, value, goly }) {
+  const animated = useAnimatedNumber(typeof value === "number" ? value : 0, 400);
   return (
-    <div className={"kpi-tile" + (hero ? " hero" : "")} style={{ "--tile-hue": `var(${hue})` }}>
-      <WidgetInfo title={label} summary={summary} query={query} hueVar={hue} />
-      <div className="kpi-top">
+    <div className="stat-row">
+      <span className="stat-row-label">{label}</span>
+      <span className="stat-row-value">{typeof value === "number" ? num(Math.round(animated)) : value}</span>
+      <GolyBadge goly={goly} />
+    </div>
+  );
+}
+
+// One YTD-or-MTD × Primary-or-Secondary card, listing the 6 required stats.
+function PeriodCard({ title, hue, icon: Icon, rows, filters, mode, ctnKey, pcsKey, totalStoreCount, sourceTag }) {
+  const golyFn = mode === "ytd" ? calcYtdGoly : calcGoly;
+  const period = resolvePeriod(rows, filters);
+
+  const valueGoly = golyFn(rows, filters, "netSales");
+  const ctnGoly = golyFn(rows, filters, ctnKey);
+  const pcsGoly = golyFn(rows, filters, pcsKey);
+
+  const productiveStores =
+    mode === "ytd" ? ytdDistinct(rows, period, "outletCode") : periodDistinct(rows, period?.year, period?.month, "outletCode");
+  const productiveDist =
+    mode === "ytd" ? ytdDistinct(rows, period, "dist") : periodDistinct(rows, period?.year, period?.month, "dist");
+
+  const salesVal = useAnimatedNumber(valueGoly?.cur || 0);
+
+  return (
+    <div className="period-card" style={{ "--tile-hue": `var(${hue})` }}>
+      <div className="period-card-head">
         <span className="kpi-icon"><Icon /></span>
-        <span className="kpi-label">{label}</span>
-        {badge && <span className="kpi-badge">{badge}</span>}
+        <div>
+          <div className="period-card-title">{title}</div>
+          <div className="period-card-sub">
+            {sourceTag} · {mode === "ytd" ? "FY to " : ""}
+            {formatPeriod(period)}
+          </div>
+        </div>
       </div>
-      <div className="kpi-value">{value}</div>
-      <div className="kpi-foot">
-        <span className="kpi-sub">{sub}</span>
-        <GolyBadge goly={goly} />
+      <div className="period-card-hero">{money(salesVal)}</div>
+      <div className="period-card-golyline">
+        <GolyBadge goly={valueGoly} />
+      </div>
+      <div className="stat-list">
+        <StatRow label="Volume (Carton)" value={ctnGoly?.cur ?? 0} goly={ctnGoly} />
+        <StatRow label="Volume (Pcs)" value={pcsGoly?.cur ?? 0} goly={pcsGoly} />
+        <StatRow label="Total store count" value={totalStoreCount || 0} />
+        <StatRow label="Productive store count" value={productiveStores} />
+        <StatRow label="Productive distributor" value={productiveDist} />
       </div>
     </div>
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
-
-export default function KpiStrip({ rows, primaryRows, options, allSecondaryRows, allPrimaryRows, filters }) {
-  const { secondaryMeta } = useData();
-  const totalOutlets = secondaryMeta?.outletCount || 0;
-  const secAll = allSecondaryRows || rows;
-  const priAll = allPrimaryRows || primaryRows;
-
-  // ── Secondary KPIs (current filter scope — respects every filter) ──
-  const secCtnRaw     = sumField(rows, "salesCtn");
-  const secUnitsRaw   = sumField(rows, "units");
-  const secOutletsRaw = distinctCount(rows, "outletCode");
-  const productivePct = totalOutlets > 0 ? (secOutletsRaw / totalOutlets) * 100 : 0;
-  const secDistRaw    = distinctCount(rows, "dist");
-
-  // ── Primary KPIs (current filter scope) ──
-  const priCtnRaw = sumField(primaryRows, "ctn");
-  const priPcsRaw = sumField(primaryRows, "pcs");
-
-  // ── MTD / YTD — resolved period (active Year+Month filter, else the
-  // dataset's latest month) so these tiles never go blank, and are
-  // comparable to the same month last year regardless of what else is filtered. ──
-  const secMtd = calcGoly(secAll, filters);
-  const priMtd = calcGoly(priAll, filters);
-  const secYtd = calcYtdGoly(secAll, filters);
-  const priYtd = calcYtdGoly(priAll, filters);
-  const periodLabel = formatPeriod(secMtd?.period || priMtd?.period);
-
-  // Note: Segment-wise Sales (GT/Export/MT, primary source only per the
-  // approved design §3.2) is NOT shown — primary's only categorical field
-  // is Customer Group2 (Q-Commerce, LMT, distributor names, …), which
-  // doesn't map to GT/Export/MT, and no such mapping has been supplied yet.
-  // Showing the raw customer groups instead would misrepresent this KPI, so
-  // it's omitted rather than approximated.
-
-  // Animated values
-  const secMtdVal = useAnimatedNumber(secMtd?.cur || 0);
-  const priMtdVal = useAnimatedNumber(priMtd?.cur || 0);
-  const secYtdVal = useAnimatedNumber(secYtd?.cur || 0);
-  const priYtdVal = useAnimatedNumber(priYtd?.cur || 0);
-  const secCtn    = useAnimatedNumber(secCtnRaw);
-  const priCtn    = useAnimatedNumber(priCtnRaw);
-  const priPcs    = useAnimatedNumber(priPcsRaw);
-  const secDist   = useAnimatedNumber(secDistRaw, 500);
-  const outlets   = useAnimatedNumber(secOutletsRaw, 500);
-  const prodPct   = useAnimatedNumber(productivePct, 500);
-
-  const hasPrimary   = primaryRows.length > 0;
-  const hasSecondary = rows.length > 0;
+export default function KpiStrip({ allSecondaryRows, allPrimaryRows, filters }) {
+  const { secondaryMeta, primaryMeta } = useData();
+  const secAll = allSecondaryRows || [];
+  const priAll = allPrimaryRows || [];
+  const hasSecondary = secAll.length > 0;
+  const hasPrimary = priAll.length > 0;
 
   return (
     <div className="widget">
       <div className="widget-head">
         <div>
           <div className="widget-title">Overview</div>
-          <div className="widget-sub">MTD/YTD figures resolved to {periodLabel} · GOLY = growth over last year</div>
+          <div className="widget-sub">YTD / MTD, Primary vs Secondary · GOLY = growth over last year</div>
+        </div>
+        <div className="widget-controls">
+          <WidgetInfo
+            title="Overview"
+            summary="Four cards — Year-to-date and Month-to-date, each split by Primary (SAP) and Secondary (distributor) source. Sales Value, Volume (Carton), and Volume (Pcs) are period-wise figures (not cumulative except where YTD is explicitly cumulative from 1 July). Total store count is the full outlet roster for that source; Productive store count / Productive distributor are counts with at least one sale in the period shown."
+            query="MTD = the resolved month (active Year+Month filter, else the latest month in the data). YTD = cumulative from 1 July (fiscal year start) through that month. GOLY = same period last year."
+          />
         </div>
       </div>
-
-      <div className="kpi-grid">
+      <div className="period-card-grid">
         {hasPrimary && (
-          <KpiTile
-            hero
-            label="YTD Pri-Sales"
-            value={money(priYtdVal)}
-            sub={"FY to " + periodLabel}
-            icon={TagIcon}
+          <PeriodCard
+            title="YTD — Primary"
             hue="--hue-bu"
-            goly={priYtd}
-            summary="Cumulative primary net sales from 1 July (fiscal year start) through the resolved period."
-            query="SUM(Value) for primary rows from FY start through period; GOLY vs the same cumulative point last year."
+            icon={WalletIcon}
+            rows={priAll}
+            filters={filters}
+            mode="ytd"
+            ctnKey="ctn"
+            pcsKey="pcs"
+            totalStoreCount={primaryMeta?.outletCount}
+            sourceTag="Primary"
           />
         )}
         {hasSecondary && (
-          <KpiTile
-            hero
-            label="YTD Sec-Sales"
-            value={money(secYtdVal)}
-            sub={"FY to " + periodLabel}
-            icon={TagIcon}
+          <PeriodCard
+            title="YTD — Secondary"
             hue="--hue-ch"
-            goly={secYtd}
-            summary="Cumulative secondary net sales from 1 July (fiscal year start) through the resolved period."
-            query="SUM(netSales) for secondary rows from FY start through period; GOLY vs the same cumulative point last year."
+            icon={WalletIcon}
+            rows={secAll}
+            filters={filters}
+            mode="ytd"
+            ctnKey="salesCtn"
+            pcsKey="units"
+            totalStoreCount={secondaryMeta?.outletCount}
+            sourceTag="Secondary"
           />
         )}
         {hasPrimary && (
-          <KpiTile
-            hero
-            label="MTD Pri-Sales"
-            value={money(priMtdVal)}
-            sub={num(Math.round(priCtn)) + " CTN this scope"}
-            icon={WalletIcon}
+          <PeriodCard
+            title="MTD — Primary"
             hue="--hue-bu"
-            goly={priMtd}
-            summary="Primary net sales for the resolved month (active Year+Month filter, else the latest month in the data)."
-            query="SUM(Value) for primary rows in the resolved month; GOLY vs the same month last year."
+            icon={BoxIcon}
+            rows={priAll}
+            filters={filters}
+            mode="mtd"
+            ctnKey="ctn"
+            pcsKey="pcs"
+            totalStoreCount={primaryMeta?.outletCount}
+            sourceTag="Primary"
           />
         )}
         {hasSecondary && (
-          <KpiTile
-            hero
-            label="MTD Sec-Sales"
-            value={money(secMtdVal)}
-            sub={num(Math.round(secCtn)) + " CTN this scope"}
-            icon={WalletIcon}
+          <PeriodCard
+            title="MTD — Secondary"
             hue="--hue-ch"
-            goly={secMtd}
-            summary="Secondary net sales for the resolved month (active Year+Month filter, else the latest month in the data)."
-            query="SUM(netSales) for secondary rows in the resolved month; GOLY vs the same month last year."
-          />
-        )}
-        {hasPrimary && (
-          <KpiTile
-            label="Primary volume"
-            value={num(Math.round(priCtn)) + " CTN"}
-            sub={num(Math.round(priPcs)) + " Pcs · current scope"}
             icon={BoxIcon}
-            hue="--hue-cat"
-            summary="Total shipped volume in cartons and pieces from primary sales, for the current filter scope."
-            query="SUM(Qty In Ctn) and SUM(Qty In Pcs) across primary line items in scope."
-          />
-        )}
-        {hasSecondary && (
-          <KpiTile
-            label="Secondary volume"
-            value={num(Math.round(secCtn)) + " CTN"}
-            sub={num(Math.round(secUnitsRaw)) + " Pcs · current scope"}
-            icon={BoxIcon}
-            hue="--hue-town"
-            summary="Total shipped volume in cartons and pieces from secondary sales, for the current filter scope."
-            query="SUM(Sales CTN) and SUM(Sales Units) across secondary line items in scope."
-          />
-        )}
-        {hasSecondary && (
-          <KpiTile
-            label="Total store count"
-            value={num(outlets)}
-            sub={"of " + num(totalOutlets) + " total"}
-            icon={MapPinIcon}
-            hue="--hue-dist"
-            summary="Distinct outlets served in this filter scope, against the total outlet roster."
-            query="COUNT(DISTINCT outletCode) in scope vs. total dataset outlets."
-          />
-        )}
-        {hasSecondary && (
-          <KpiTile
-            label="Productive outlets"
-            value={pct(prodPct)}
-            sub={num(secOutletsRaw) + " productive"}
-            icon={MapPinIcon}
-            hue="--hue-dist"
-            summary="Outlets with at least one sale in scope, as a share of the total outlet roster."
-            query="COUNT(DISTINCT outletCode in scope) ÷ COUNT(DISTINCT outletCode) in full dataset."
-          />
-        )}
-        {hasSecondary && (
-          <KpiTile
-            label="Distributors active"
-            value={num(Math.round(secDist))}
-            sub={"of " + (options?.dist?.length || 0) + " total"}
-            icon={TruckIcon}
-            hue="--hue-src"
-            summary="Distinct distributors with at least one sale in the current filter scope."
-            query="COUNT(DISTINCT dist) within scope vs. total roster."
+            rows={secAll}
+            filters={filters}
+            mode="mtd"
+            ctnKey="salesCtn"
+            pcsKey="units"
+            totalStoreCount={secondaryMeta?.outletCount}
+            sourceTag="Secondary"
           />
         )}
       </div>

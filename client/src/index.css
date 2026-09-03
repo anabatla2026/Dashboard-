@@ -679,6 +679,29 @@ button {
   gap: 6px;
   flex-shrink: 0;
 }
+.fy-select {
+  appearance: none;
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 5px 22px 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%2385899f' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+.fy-select:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.fy-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 /* ---------- Info button + explanation modal ---------- */
 .info-btn {
@@ -847,38 +870,29 @@ button {
   color: var(--accent);
 }
 
-/* ---------- KPI widget ---------- */
-/* A real grid, not flex-wrap — flex-wrap sized each row's tiles off that
-   row's own content, so row widths didn't line up with the row above it.
-   3 columns: the tile count is always a multiple of 3 (Primary trio,
-   Secondary trio, Secondary-only trio), so this never leaves a gap. */
-.kpi-grid {
+/* ---------- KPI widget: 4 period cards (YTD/MTD × Primary/Secondary) ---------- */
+.period-card-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 1px;
   background: var(--border);
   border-radius: 0 0 18px 18px;
   overflow: hidden;
   margin-top: 6px;
 }
-.kpi-tile {
+.period-card {
   position: relative;
   background: color-mix(in srgb, var(--surface) 70%, transparent);
-  padding: 6px 9px 6px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  overflow: hidden;
+  gap: 6px;
   min-width: 0;
 }
-.kpi-tile.hero {
-  background: linear-gradient(165deg, var(--accent-wash), color-mix(in srgb, var(--surface) 70%, transparent) 75%);
-}
-.kpi-top {
+.period-card-head {
   display: flex;
   align-items: center;
-  gap: 5px;
-  position: relative;
+  gap: 7px;
 }
 .kpi-icon {
   display: flex;
@@ -888,53 +902,70 @@ button {
   flex-shrink: 0;
 }
 .kpi-icon svg {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
 }
-.kpi-label {
-  font-size: 8px;
+.period-card-title {
+  font-size: 10.5px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
+  color: var(--text-primary);
 }
-.kpi-value {
-  font-size: 14.5px;
+.period-card-sub {
+  font-size: 8px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.period-card-hero {
+  font-size: 19px;
   font-weight: 800;
   letter-spacing: -0.01em;
-  color: var(--text-primary);
-  position: relative;
   font-family: "Manrope", sans-serif;
   font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.kpi-tile.hero .kpi-value {
-  font-size: 16.5px;
   background: var(--accent-gradient);
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
 }
-.kpi-foot {
+.period-card-golyline {
+  margin-top: -4px;
+}
+.stat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.stat-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
-  position: relative;
+  font-size: 9.5px;
 }
-.kpi-sub {
-  font-size: 8.5px;
+.stat-row-label {
+  flex: 1;
+  min-width: 0;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.stat-row-value {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+@media (max-width: 1080px) {
+  .period-card-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 680px) {
+  .period-card-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .goly-badge {
   font-size: 8px;
@@ -956,17 +987,6 @@ button {
 }
 
 /* KPI section divider labels (Primary Sales / Secondary Sales / Segment-wise) */
-.kpi-section-label {
-  font-size: 8px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  padding: 9px 14px 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .kpi-badge {
   font-size: 8px;
   font-weight: 700;

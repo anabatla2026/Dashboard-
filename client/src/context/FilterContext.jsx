@@ -6,9 +6,15 @@ const FilterContext = createContext(null);
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Dimensions that exist in primary data — filters for other dims are skipped
-// when filtering primary rows so they don't accidentally exclude everything.
-const PRIMARY_DIMS = new Set(["year", "month", "cat", "town"]);
+// Dimensions that exist in primary data AND are safe to cross-filter with —
+// filters for other dims are skipped when filtering primary rows so they
+// don't accidentally exclude everything. Region/Distributor aren't included
+// even though primary now carries its own dist/town-level identity: SAP and
+// SalesFlo maintain separate master data for those and no reconciliation
+// mapping has been supplied yet (MOM 2026-09-02 §2) — filtering primary by a
+// secondary-sourced Region/Distributor value would silently misattribute
+// rows. Brand and Category names verifiably match across both sources.
+const PRIMARY_DIMS = new Set(["year", "month", "cat", "brand", "town"]);
 
 // The "SD" app-user tag (2026-08-31 requirement): its secondary sales rows
 // overstate real sales, so it's excluded by default everywhere. The raw
@@ -17,7 +23,7 @@ const PRIMARY_DIMS = new Set(["year", "month", "cat", "town"]);
 // confirmation. Kept out of emptyFilters()'s blank slate — see resetAll.
 const APP_USER_DEFAULT_EXCLUDE = new Set(["SD - OB"]);
 
-function applyPrimaryFilters(rows, filters) {
+export function applyPrimaryFilters(rows, filters) {
   const active = DIMS.filter(
     (d) => PRIMARY_DIMS.has(d.key) && filters[d.key] && filters[d.key].size > 0
   );

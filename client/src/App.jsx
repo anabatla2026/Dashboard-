@@ -1,12 +1,13 @@
+import { useMemo } from "react";
 import { useData } from "./context/DataContext";
-import { FilterProvider, useFilters } from "./context/FilterContext";
+import { FilterProvider, useFilters, applyPrimaryFilters } from "./context/FilterContext";
+import { applyFilters } from "./lib/dims";
 import AppBar from "./components/AppBar";
 import Header from "./components/Header";
 import GlobalFilterBar from "./components/GlobalFilterBar";
 import KpiStrip from "./components/KpiStrip";
 import ChartCard from "./components/ChartCard";
-import DistributorTable from "./components/DistributorTable";
-import RegionTable from "./components/RegionTable";
+import MonthOverMonthTable from "./components/MonthOverMonthTable";
 import ClassificationPlaceholder from "./components/ClassificationPlaceholder";
 import Skeleton from "./components/Skeleton";
 
@@ -38,7 +39,8 @@ const CHART_SECTIONS = [
       },
       {
         id: "ch",
-        title: "Channel type mix",
+        // Renamed per MOM 2026-09-02 §3 (was "Channel type mix").
+        title: "Secondary Sales Value by Channel Type",
         type: "bar-h",
         dim: "chType",
         source: "secondary",
@@ -77,6 +79,28 @@ const CHART_SECTIONS = [
         className: "span-2 size-sm",
         summary: "Brand-wise net sales compared side by side across both data sources.",
         query: "SUM(netSales) grouped by Brand, secondary vs primary, top 8 + Other.",
+      },
+    ],
+  },
+
+  {
+    id:    "region-section",
+    title: "Region-wise Targets vs. Achievement",
+    desc:  "Secondary net sales by region — Target pending region mapping & target data from ABI Sales Team",
+    charts: [
+      {
+        id: "region-bar",
+        // Table → horizontal bar chart per MOM 2026-09-02 §5.
+        title: "Region-wise Achievement (Secondary)",
+        type: "bar-h",
+        dim: "region",
+        source: "secondary",
+        hueVar: "--hue-town",
+        topN: 10,
+        className: "span-4 size-sm",
+        summary:
+          "Secondary net sales by region. Target is not shown yet — region mapping and target figures are pending from the ABI Sales Team (MOM 2026-09-02 §5); once supplied, Achievement % will be added alongside this.",
+        query: "SUM(netSales) grouped by Region (secondary), sorted descending.",
       },
     ],
   },
@@ -128,20 +152,19 @@ function SectionBlock({ section, filteredRows, filteredPrimaryRows }) {
 function Dashboard() {
   const { meta, secondaryRows, primaryRows } = useData();
   const { filteredRows, filteredPrimaryRows, filters } = useFilters();
-  const options = meta?.dimensions || {};
+
+  // Month-over-Month Sales has its own Fiscal Year selector, so it must not
+  // be pre-narrowed by the global Year/Month filter the way every other
+  // widget is — only Region (and other non-date dims) apply here.
+  const momFilters = useMemo(() => ({ ...filters, year: new Set(), month: new Set() }), [filters]);
+  const momSecondaryRows = useMemo(() => applyFilters(secondaryRows, momFilters), [secondaryRows, momFilters]);
+  const momPrimaryRows = useMemo(() => applyPrimaryFilters(primaryRows, momFilters), [primaryRows, momFilters]);
 
   return (
     <div className="container">
       {/* ── KPI Overview ── */}
       <section className="section">
-        <KpiStrip
-          rows={filteredRows}
-          primaryRows={filteredPrimaryRows}
-          options={options}
-          allSecondaryRows={secondaryRows}
-          allPrimaryRows={primaryRows}
-          filters={filters}
-        />
+        <KpiStrip allSecondaryRows={secondaryRows} allPrimaryRows={primaryRows} filters={filters} />
       </section>
 
       {/* ── Chart Sections ── */}
@@ -154,19 +177,9 @@ function Dashboard() {
         />
       ))}
 
-      {/* ── Summary Tables ── */}
+      {/* ── Month-over-Month Sales (replaces Distributor Performance, MOM 2026-09-02 §6) ── */}
       <section className="section">
-        <div className="section-head">
-          <div>
-            <h2>Summary Tables</h2>
-            <div className="desc">Aggregated performance data — sortable, drillable</div>
-          </div>
-        </div>
-        <RegionTable rows={filteredRows} />
-      </section>
-
-      <section className="section">
-        <DistributorTable rows={filteredRows} />
+        <MonthOverMonthTable secondaryRows={momSecondaryRows} primaryRows={momPrimaryRows} />
       </section>
 
       {/* ── Classification-wise Productivity & Sales (reserved, OP-02) ── */}

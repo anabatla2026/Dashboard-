@@ -108,8 +108,16 @@ const PRI_COLS_MAP = {
   "Qty In Ctn": "ctn",
   "Value": "netSales",
   "Total Value": "gross",
-  "Ship to party Name": "customerName",
-  "Party Name": "partyName",
+  // Ship-to party is the delivery point (store); Party is the billing
+  // account (distributor). Named to match secondary's outletCode/dist so
+  // the same distinct-count logic works across both sources — these are
+  // each source's own internal identity, not reconciled with each other
+  // (SAP vs SalesFlo distributor/store master data reconciliation is a
+  // separate, not-yet-supplied mapping — see MOM 2026-09-02 §2).
+  "Ship to party": "outletCode",
+  "Ship to party Name": "outlet",
+  "Party Code": "distCode",
+  "Party Name": "dist",
   "Status": "status",
 };
 
