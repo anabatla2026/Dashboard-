@@ -225,8 +225,14 @@ function parsePrimaryWorkbook(filePath) {
     const trimmed = {};
     for (const k in record) trimmed[k.trim()] = record[k];
 
-    const sno = trimmed["S. NO"];
-    if (sno === null || sno === undefined || sno === "" || isNaN(Number(sno))) continue;
+    // Validate on Invoice No, not "S. NO" — SAP prefixes continuation lines
+    // of a multi-line invoice with "*" (e.g. "*47"), which reads as non-
+    // numeric and was silently dropping ~89% of all rows (7,300 of 8,199),
+    // undercounting every primary metric — value, volume, everything — by
+    // the same margin. Invoice No has no such quirk: every real row has
+    // one, and only the sheet's single trailing blank/total row doesn't.
+    const invoice = trimmed["Invoice No"];
+    if (invoice === null || invoice === undefined || invoice === "" || isNaN(Number(invoice))) continue;
 
     const out = {};
     for (const [srcCol, destKey] of Object.entries(PRI_COLS_MAP)) {
