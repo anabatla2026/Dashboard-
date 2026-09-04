@@ -24,7 +24,7 @@ export default function Header() {
         <div className="brand">
           <div className="brand-mark">SS</div>
           <div className="brand-text">
-            <h1>Secondary Sales Console</h1>
+            <h1>Sales Console</h1>
             <div className="sub">Bona Papa · Nofea · NaNa · Momse · TEGRA</div>
           </div>
         </div>

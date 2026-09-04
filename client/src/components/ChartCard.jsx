@@ -51,6 +51,7 @@ export default function ChartCard({
   tip,
   fallbackSummary,
   fallbackQuery,
+  badge,
 }) {
   const isDual = DUAL_TYPES.has(type);
   const distinctDates = useMemo(() => (type === "trend" ? new Set(rows.map((r) => r.date)).size : 0), [rows, type]);
@@ -144,6 +145,7 @@ export default function ChartCard({
               {useFallback
                 ? `Ranked · single day of data so far${hasOther ? ` · top ${activeAggregated.length - 1} shown` : ""}`
                 : `${CHART_LABEL[effectiveType]}${hasOther ? ` · top ${activeAggregated.length - 1} shown` : ""}`}
+              {badge && <span className="kpi-badge kpi-badge--pending">{badge}</span>}
             </div>
           )}
         </div>

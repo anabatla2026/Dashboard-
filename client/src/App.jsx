@@ -8,7 +8,6 @@ import GlobalFilterBar from "./components/GlobalFilterBar";
 import KpiStrip from "./components/KpiStrip";
 import ChartCard from "./components/ChartCard";
 import MonthOverMonthTable from "./components/MonthOverMonthTable";
-import ClassificationPlaceholder from "./components/ClassificationPlaceholder";
 import Skeleton from "./components/Skeleton";
 
 // ── Chart section definitions ─────────────────────────────────────────────────
@@ -60,7 +59,7 @@ const CHART_SECTIONS = [
     charts: [
       {
         id: "cat-dual",
-        title: "Net sales by category — Primary vs Secondary",
+        title: "Net sales value by category — Primary vs Secondary",
         type: "dual-bar-h",
         dim: "cat",
         hueVar: "--hue-cat",
@@ -71,7 +70,7 @@ const CHART_SECTIONS = [
       },
       {
         id: "brand-dual",
-        title: "Top brands by net sales — Primary vs Secondary",
+        title: "Top brands by net sales value — Primary vs Secondary",
         type: "dual-bar-h",
         dim: "brand",
         hueVar: "--hue-dist",
@@ -98,6 +97,7 @@ const CHART_SECTIONS = [
         hueVar: "--hue-town",
         topN: 10,
         className: "span-4 size-sm",
+        badge: "Target pending",
         summary:
           "Secondary net sales by region. Target is not shown yet — region mapping and target figures are pending from the ABI Sales Team (MOM 2026-09-02 §5); once supplied, Achievement % will be added alongside this.",
         query: "SUM(netSales) grouped by Region (secondary), sorted descending.",
@@ -141,6 +141,7 @@ function SectionBlock({ section, filteredRows, filteredPrimaryRows }) {
               tip={def.tip}
               fallbackSummary={def.fallbackSummary}
               fallbackQuery={def.fallbackQuery}
+              badge={def.badge}
             />
           );
         })}
@@ -153,12 +154,16 @@ function Dashboard() {
   const { meta, secondaryRows, primaryRows } = useData();
   const { filteredRows, filteredPrimaryRows, filters } = useFilters();
 
-  // Month-over-Month Sales has its own Fiscal Year selector, so it must not
-  // be pre-narrowed by the global Year/Month filter the way every other
-  // widget is — only Region (and other non-date dims) apply here.
-  const momFilters = useMemo(() => ({ ...filters, year: new Set(), month: new Set() }), [filters]);
+  // Month-over-Month Sales has its own Fiscal Year and Region selectors, so
+  // it must not be pre-narrowed by the global Year/Month/Region filters the
+  // way every other widget is — other non-date, non-region dims still apply.
+  const momFilters = useMemo(
+    () => ({ ...filters, year: new Set(), month: new Set(), region: new Set() }),
+    [filters]
+  );
   const momSecondaryRows = useMemo(() => applyFilters(secondaryRows, momFilters), [secondaryRows, momFilters]);
   const momPrimaryRows = useMemo(() => applyPrimaryFilters(primaryRows, momFilters), [primaryRows, momFilters]);
+  const regionOptions = meta?.dimensions?.region || [];
 
   return (
     <div className="container">
@@ -179,12 +184,7 @@ function Dashboard() {
 
       {/* ── Month-over-Month Sales (replaces Distributor Performance, MOM 2026-09-02 §6) ── */}
       <section className="section">
-        <MonthOverMonthTable secondaryRows={momSecondaryRows} primaryRows={momPrimaryRows} />
-      </section>
-
-      {/* ── Classification-wise Productivity & Sales (reserved, OP-02) ── */}
-      <section className="section">
-        <ClassificationPlaceholder />
+        <MonthOverMonthTable secondaryRows={momSecondaryRows} primaryRows={momPrimaryRows} regionOptions={regionOptions} />
       </section>
 
       <footer className="credit">

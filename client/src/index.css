@@ -880,6 +880,11 @@ button {
   overflow: hidden;
   margin-top: 6px;
 }
+/* Bold divider between the YTD pair (cards 1-2) and MTD pair (cards 3-4) —
+   the thin 1px gridlines elsewhere are too subtle to read as a grouping. */
+.period-card-grid > *:nth-child(2) {
+  border-right: 3px solid var(--border-strong);
+}
 .period-card {
   position: relative;
   background: color-mix(in srgb, var(--surface) 70%, transparent);
@@ -927,6 +932,16 @@ button {
   -webkit-background-clip: text;
   color: transparent;
 }
+.period-card-unit {
+  font-family: "Inter", sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  color: var(--text-muted);
+}
 .period-card-golyline {
   margin-top: -4px;
 }
@@ -960,6 +975,15 @@ button {
 @media (max-width: 1080px) {
   .period-card-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+  /* At 2 columns the YTD/MTD split runs horizontally (row 1 vs row 2), not
+     vertically, so move the bold divider from a right border to a bottom one. */
+  .period-card-grid > *:nth-child(2) {
+    border-right: none;
+    border-bottom: 3px solid var(--border-strong);
+  }
+  .period-card-grid > *:nth-child(1) {
+    border-bottom: 3px solid var(--border-strong);
   }
 }
 @media (max-width: 680px) {

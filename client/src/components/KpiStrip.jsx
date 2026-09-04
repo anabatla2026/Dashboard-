@@ -62,7 +62,9 @@ function PeriodCard({ title, hue, icon: Icon, rows, filters, mode, ctnKey, pcsKe
           </div>
         </div>
       </div>
-      <div className="period-card-hero">{money(salesVal)}</div>
+      <div className="period-card-hero">
+        {money(salesVal)} <span className="period-card-unit">PKR</span>
+      </div>
       <div className="period-card-golyline">
         <GolyBadge goly={valueGoly} />
       </div>
