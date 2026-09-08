@@ -133,7 +133,6 @@ export default function KpiStrip({ allSecondaryRows, allPrimaryRows, filters }) 
             pcsKey="units"
             totalStoreCount={secondaryMeta?.outletCount}
             sourceTag="Secondary"
-            showStoreStats={false}
           />
         )}
         {hasPrimary && (
@@ -148,6 +147,7 @@ export default function KpiStrip({ allSecondaryRows, allPrimaryRows, filters }) 
             pcsKey="pcs"
             totalStoreCount={primaryMeta?.outletCount}
             sourceTag="Primary"
+            showStoreStats={false}
           />
         )}
         {hasSecondary && (
