@@ -35,7 +35,7 @@ function StatRow({ label, value, goly }) {
 }
 
 // One YTD-or-MTD × Primary-or-Secondary card, listing the 6 required stats.
-function PeriodCard({ title, hue, icon: Icon, rows, filters, mode, ctnKey, pcsKey, totalStoreCount, sourceTag }) {
+function PeriodCard({ title, hue, icon: Icon, rows, filters, mode, ctnKey, pcsKey, totalStoreCount, sourceTag, showStoreStats = true }) {
   const golyFn = mode === "ytd" ? calcYtdGoly : calcGoly;
   const period = resolvePeriod(rows, filters);
 
@@ -71,9 +71,13 @@ function PeriodCard({ title, hue, icon: Icon, rows, filters, mode, ctnKey, pcsKe
       <div className="stat-list">
         <StatRow label="Volume (Carton)" value={ctnGoly?.cur ?? 0} goly={ctnGoly} />
         <StatRow label="Volume (Pcs)" value={pcsGoly?.cur ?? 0} goly={pcsGoly} />
-        <StatRow label="Total store count" value={totalStoreCount || 0} />
-        <StatRow label="Productive store count" value={productiveStores} />
-        <StatRow label="Productive distributor" value={productiveDist} />
+        {showStoreStats && (
+          <>
+            <StatRow label="Total store count" value={totalStoreCount || 0} />
+            <StatRow label="Productive store count" value={productiveStores} />
+            <StatRow label="Productive distributor" value={productiveDist} />
+          </>
+        )}
       </div>
     </div>
   );
@@ -114,6 +118,7 @@ export default function KpiStrip({ allSecondaryRows, allPrimaryRows, filters }) 
             pcsKey="pcs"
             totalStoreCount={primaryMeta?.outletCount}
             sourceTag="Primary"
+            showStoreStats={false}
           />
         )}
         {hasSecondary && (
@@ -128,6 +133,7 @@ export default function KpiStrip({ allSecondaryRows, allPrimaryRows, filters }) 
             pcsKey="units"
             totalStoreCount={secondaryMeta?.outletCount}
             sourceTag="Secondary"
+            showStoreStats={false}
           />
         )}
         {hasPrimary && (
