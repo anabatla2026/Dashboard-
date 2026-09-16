@@ -91,23 +91,8 @@ const CHART_SECTIONS = [
   {
     id:    "region-section",
     title: "Region-wise Targets vs. Achievement",
-    desc:  "Secondary net sales by region, ranked (drillable to town/distributor) — Target vs Achievement shown separately below since Target only exists at region granularity",
-    charts: [
-      {
-        id: "region-bar",
-        // Table → horizontal bar chart per MOM 2026-09-02 §5.
-        title: "Region-wise Achievement (Secondary)",
-        type: "bar-h",
-        dim: "region",
-        useServerAgg: true,
-        hueVar: "--hue-town",
-        topN: 10,
-        className: "span-4 size-sm",
-        summary:
-          "Secondary net sales by region, ranked — click a bar to drill into town, then distributor.",
-        query: "SUM(netSales) grouped by Region (secondary), sorted descending.",
-      },
-    ],
+    desc:  "Secondary net sales achievement against monthly target, by region",
+    charts: [],
   },
 ];
 
