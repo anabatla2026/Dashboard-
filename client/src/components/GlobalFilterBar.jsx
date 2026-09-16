@@ -6,10 +6,9 @@ import { CalendarIcon } from "./Icons";
 const TIME_KEYS = new Set(["year", "month"]);
 
 export default function GlobalFilterBar() {
-  const { dims, filters, setFilter, resetAll, filteredRows, filteredPrimaryRows, activeCount, totalRows, totalPrimaryRows } =
-    useFilters();
-  const { meta } = useData();
-  const options = meta?.dimensions || {};
+  const { dims, filters, setFilter, resetAll, activeCount } = useFilters();
+  const { secondaryDims } = useData();
+  const options = secondaryDims || {};
 
   const timeDims = dims.filter((d) => TIME_KEYS.has(d.key));
   const bizDims  = dims.filter((d) => !TIME_KEYS.has(d.key));
@@ -48,18 +47,6 @@ export default function GlobalFilterBar() {
             Clear all ({activeCount})
           </button>
         )}
-        <div className="filterbar-count">
-          <span className="filterbar-count-row">
-            <strong>{filteredRows.length.toLocaleString()}</strong>
-            <span> / {totalRows.toLocaleString()} sec</span>
-          </span>
-          {totalPrimaryRows > 0 && (
-            <span className="filterbar-count-row">
-              <strong>{filteredPrimaryRows.length.toLocaleString()}</strong>
-              <span> / {totalPrimaryRows.toLocaleString()} pri</span>
-            </span>
-          )}
-        </div>
       </div>
     </div>
   );

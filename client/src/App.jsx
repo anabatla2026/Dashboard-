@@ -1,12 +1,11 @@
-import { useMemo } from "react";
 import { useData } from "./context/DataContext";
-import { FilterProvider, useFilters, applyPrimaryFilters } from "./context/FilterContext";
-import { applyFilters } from "./lib/dims";
+import { FilterProvider, useFilters } from "./context/FilterContext";
 import AppBar from "./components/AppBar";
 import Header from "./components/Header";
 import GlobalFilterBar from "./components/GlobalFilterBar";
 import KpiStrip from "./components/KpiStrip";
 import ChartCard from "./components/ChartCard";
+import RegionTargetChart from "./components/RegionTargetChart";
 import MonthOverMonthTable from "./components/MonthOverMonthTable";
 import Skeleton from "./components/Skeleton";
 
@@ -17,7 +16,12 @@ import Skeleton from "./components/Skeleton";
 // town concentration, Business Unit mix, and the extra channel/segment/
 // order-source/area-type/region charts this build previously carried beyond
 // what was actually signed off).
-// source: "secondary" → filteredRows  |  "primary" → filteredPrimaryRows
+// Both Primary (GOLD.ZFI_SCO_VW) and Secondary (GOLD.SALESFLO_DATADUMP_VW)
+// are Snowflake-backed now — neither table can be shipped whole to the
+// browser the way the original single-month Excel exports were, so every
+// chart below is `useServerAgg: true` and fetches its own pre-aggregated
+// GROUP BY from the server (see ChartCard.jsx / hooks/useServerAggregate.js),
+// including both sides of the dual (Primary vs Secondary) charts.
 
 const CHART_SECTIONS = [
   {
@@ -42,7 +46,7 @@ const CHART_SECTIONS = [
         title: "Secondary Sales Value by Channel Type",
         type: "bar-h",
         dim: "chType",
-        source: "secondary",
+        useServerAgg: true,
         hueVar: "--hue-ch",
         topN: 8,
         className: "span-2 size-sm",
@@ -62,6 +66,7 @@ const CHART_SECTIONS = [
         title: "Net sales value by category — Primary vs Secondary",
         type: "dual-bar-h",
         dim: "cat",
+        useServerAgg: true,
         hueVar: "--hue-cat",
         topN: 7,
         className: "span-2 size-sm",
@@ -73,6 +78,7 @@ const CHART_SECTIONS = [
         title: "Top brands by net sales value — Primary vs Secondary",
         type: "dual-bar-h",
         dim: "brand",
+        useServerAgg: true,
         hueVar: "--hue-dist",
         topN: 8,
         className: "span-2 size-sm",
@@ -85,7 +91,7 @@ const CHART_SECTIONS = [
   {
     id:    "region-section",
     title: "Region-wise Targets vs. Achievement",
-    desc:  "Secondary net sales by region — Target pending region mapping & target data from ABI Sales Team",
+    desc:  "Secondary net sales by region, ranked (drillable to town/distributor) — Target vs Achievement shown separately below since Target only exists at region granularity",
     charts: [
       {
         id: "region-bar",
@@ -93,20 +99,19 @@ const CHART_SECTIONS = [
         title: "Region-wise Achievement (Secondary)",
         type: "bar-h",
         dim: "region",
-        source: "secondary",
+        useServerAgg: true,
         hueVar: "--hue-town",
         topN: 10,
         className: "span-4 size-sm",
-        badge: "Target pending",
         summary:
-          "Secondary net sales by region. Target is not shown yet — region mapping and target figures are pending from the ABI Sales Team (MOM 2026-09-02 §5); once supplied, Achievement % will be added alongside this.",
+          "Secondary net sales by region, ranked — click a bar to drill into town, then distributor.",
         query: "SUM(netSales) grouped by Region (secondary), sorted descending.",
       },
     ],
   },
 ];
 
-function SectionBlock({ section, filteredRows, filteredPrimaryRows }) {
+function SectionBlock({ section, extra }) {
   return (
     <section className="section">
       <div className="section-head">
@@ -116,60 +121,50 @@ function SectionBlock({ section, filteredRows, filteredPrimaryRows }) {
         </div>
       </div>
       <div className="chart-grid">
-        {section.charts.map((def) => {
-          const isDual = def.type === "dual-bar-h" || def.type === "dual-trend";
-          const rows = def.source === "primary" ? filteredPrimaryRows : filteredRows;
-          return (
-            <ChartCard
-              key={def.id}
-              title={def.title}
-              type={def.type}
-              dim={def.dim}
-              hueVar={def.hueVar}
-              topN={def.topN}
-              rows={rows}
-              secondaryRows={isDual ? filteredRows : undefined}
-              primaryRows={isDual ? filteredPrimaryRows : undefined}
-              className={def.className}
-              chartWidth={def.chartWidth}
-              labelChars={def.labelChars}
-              fallbackDim={def.fallbackDim}
-              fallbackTitle={def.fallbackTitle}
-              fallbackTopN={def.fallbackTopN}
-              summary={def.summary}
-              query={def.query}
-              tip={def.tip}
-              fallbackSummary={def.fallbackSummary}
-              fallbackQuery={def.fallbackQuery}
-              badge={def.badge}
-            />
-          );
-        })}
+        {extra}
+        {section.charts.map((def) => (
+          <ChartCard
+            key={def.id}
+            title={def.title}
+            type={def.type}
+            dim={def.dim}
+            hueVar={def.hueVar}
+            topN={def.topN}
+            useServerAgg={def.useServerAgg}
+            className={def.className}
+            chartWidth={def.chartWidth}
+            labelChars={def.labelChars}
+            fallbackDim={def.fallbackDim}
+            fallbackTitle={def.fallbackTitle}
+            fallbackTopN={def.fallbackTopN}
+            summary={def.summary}
+            query={def.query}
+            tip={def.tip}
+            fallbackSummary={def.fallbackSummary}
+            fallbackQuery={def.fallbackQuery}
+            badge={def.badge}
+          />
+        ))}
       </div>
     </section>
   );
 }
 
 function Dashboard() {
-  const { meta, secondaryRows, primaryRows } = useData();
-  const { filteredRows, filteredPrimaryRows, filters } = useFilters();
+  const { secondaryMeta, primaryMeta } = useData();
+  const { filters } = useFilters();
 
-  // Month-over-Month Sales has its own Fiscal Year and Region selectors, so
-  // it must not be pre-narrowed by the global Year/Month/Region filters the
-  // way every other widget is — other non-date, non-region dims still apply.
-  const momFilters = useMemo(
-    () => ({ ...filters, year: new Set(), month: new Set(), region: new Set() }),
-    [filters]
-  );
-  const momSecondaryRows = useMemo(() => applyFilters(secondaryRows, momFilters), [secondaryRows, momFilters]);
-  const momPrimaryRows = useMemo(() => applyPrimaryFilters(primaryRows, momFilters), [primaryRows, momFilters]);
-  const regionOptions = meta?.dimensions?.region || [];
+  // Same period-resolution rule as the KPI cards: the active single
+  // Year+Month filter, or (when unset) the server resolves the latest
+  // period itself.
+  const selectedYear = filters.year?.size === 1 ? [...filters.year][0] : undefined;
+  const selectedMonth = filters.month?.size === 1 ? [...filters.month][0] : undefined;
 
   return (
     <div className="container">
       {/* ── KPI Overview ── */}
       <section className="section">
-        <KpiStrip allSecondaryRows={secondaryRows} allPrimaryRows={primaryRows} filters={filters} />
+        <KpiStrip filters={filters} />
       </section>
 
       {/* ── Chart Sections ── */}
@@ -177,22 +172,28 @@ function Dashboard() {
         <SectionBlock
           key={section.id}
           section={section}
-          filteredRows={filteredRows}
-          filteredPrimaryRows={filteredPrimaryRows}
+          extra={
+            section.id === "region-section" ? (
+              <RegionTargetChart year={selectedYear} month={selectedMonth} className="span-4 size-sm" />
+            ) : undefined
+          }
         />
       ))}
 
       {/* ── Month-over-Month Sales (replaces Distributor Performance, MOM 2026-09-02 §6) ── */}
       <section className="section">
-        <MonthOverMonthTable secondaryRows={momSecondaryRows} primaryRows={momPrimaryRows} regionOptions={regionOptions} />
+        <MonthOverMonthTable
+          filters={filters}
+          secondaryDateRange={secondaryMeta?.dateRange}
+          primaryDateRange={primaryMeta?.dateRange}
+        />
       </section>
 
       <footer className="credit">
-        Dashboard · MTD data only · DWH build in progress ·{" "}
-        {meta?.sourceFile ? `secondary: ${meta.sourceFile}` : ""}
-        {meta?.dateRange?.min ? ` · ${meta.dateRange.min}` : ""}
-        {meta?.dateRange?.max && meta.dateRange.max !== meta.dateRange.min
-          ? ` to ${meta.dateRange.max}`
+        Dashboard · DWH build in progress · primary &amp; secondary: Snowflake
+        {secondaryMeta?.dateRange?.min ? ` · ${secondaryMeta.dateRange.min}` : ""}
+        {secondaryMeta?.dateRange?.max && secondaryMeta.dateRange.max !== secondaryMeta.dateRange.min
+          ? ` to ${secondaryMeta.dateRange.max}`
           : ""}{" "}
         · all figures in PKR (Rs)
       </footer>
@@ -218,10 +219,6 @@ export default function App() {
           <div className="center-state">
             <h2>Couldn&rsquo;t load the data</h2>
             <p>{error}</p>
-            <p>
-              Drop a <code>primary data.xlsx</code> and/or secondary sales <code>.xlsx</code> export into the
-              server&rsquo;s <code>data/</code> folder, then retry.
-            </p>
             <button className="icon-btn wide" onClick={refresh}>
               Try again
             </button>

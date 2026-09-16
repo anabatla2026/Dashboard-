@@ -1,19 +1,31 @@
-# Secondary Sales Console
+# Sales Console
 
-A live dashboard over your secondary sales Excel dumps: a Node/Express API
-reads and watches the `.xlsx` file, and a React (Vite) front end renders it —
-one global filter bar (including Year / Month / Date) scopes every KPI,
-chart, and table at once.
+A live dashboard over Primary (SAP) and Secondary (SalesFlo distributor)
+sales data — both now read directly from Snowflake. A Node/Express API runs
+the aggregation queries per request, and a React (Vite) front end renders
+the results; one global filter bar (Year, Month, Region, Category, Brand,
+Channel type, Town, Distributor, App User Tag) scopes every KPI and chart at
+once by triggering fresh queries, not by re-filtering an in-memory dataset.
 
 ## Structure
 
 ```
-data/     Drop your .xlsx export(s) here (also committed — see Deploying)
-server/   Express API for local dev — reads the Excel file, watches it for changes
+server/   Express API for local dev — mounts the Primary/Secondary routes
 client/   React (Vite) dashboard
-shared/   Excel parsing logic, used by both server/ (local) and api/ (Vercel)
-api/      Vercel serverless functions — same data, no file-watching (see Deploying)
+shared/   Snowflake connection + all query logic, used by both server/
+          (local) and api/ (Vercel)
+api/      Vercel serverless functions mirroring server/'s routes — same
+          query logic, no persistent process
 ```
+
+`shared/snowflakeClient.js` holds the connection; `shared/primaryQueries.js`
+and `shared/secondaryQueries.js` hold every aggregation query (KPIs, trend,
+category/brand breakdowns, month-over-month, region achievement/target).
+Both are queried straight from `GOLD.ZFI_SCO_VW` (Primary) and
+`GOLD.SALESFLO_DATADUMP_VW` (Secondary) — no data is cached or shipped as
+raw rows to the browser; each widget fetches its own pre-aggregated result
+and re-fetches whenever the filters, drill-down level, or fiscal year
+selection change.
 
 ## Run it
 
@@ -21,6 +33,17 @@ First time only:
 
 ```bash
 npm run install:all
+```
+
+Set up Snowflake credentials in a `.env` file at the project root (gitignored):
+
+```
+SNOWFLAKE_ACCOUNT=...
+SNOWFLAKE_USERNAME=...
+SNOWFLAKE_PASSWORD=...
+SNOWFLAKE_WAREHOUSE=...
+SNOWFLAKE_DATABASE=DWH
+SNOWFLAKE_SCHEMA=GOLD
 ```
 
 Then, from the project root:
@@ -37,69 +60,46 @@ terminals if you prefer.)
 
 ## Updating the data
 
-Every time you get a new export, just drop the new `.xlsx` file into `data/`
-(you can keep the old ones there too, or delete them — it doesn't matter).
-The server watches that folder and always serves whichever `.xlsx` file was
-modified most recently, so:
-
-- **Replace the file in place** (save over `SecondarySaleDataDump_....xlsx`) — picked up automatically within about half a second.
-- **Add a new dated file** (e.g. `SecondarySaleDataDump_2026-08-22.xlsx`) — also picked up automatically, no restart needed.
-
-The header's **Refresh** button re-fetches from the API on demand (also
-forces a re-read of the file in case you want to be sure).
-
-Once exports for more than one date exist, the **Year / Month / Date**
-filters and the **Net sales trend** chart start doing real work — right now,
-with a single day of data, the trend chart shows a friendly single-day
-callout instead of an awkward one-point line.
+There's nothing to drop in or replace locally — both Primary and Secondary
+are live Snowflake views, updated by the data team's own pipelines. The
+header's **Refresh** button forces every widget to re-query Snowflake (there
+is no local cache to invalidate the way an Excel file-watcher would).
 
 ## How filtering works
 
-One filter bar sits under the header (Year, Month, Date, then the business
-dimensions — Business unit, Category, Channel type, Town, Distributor, Order
-source). Anything selected there scopes the KPI strip, every chart, the
-distributor leaderboard, and the transaction table **together** — there's no
-per-widget filtering. The transaction table also has its own text search box,
-which narrows within whatever the global filters already selected.
+One filter bar sits under the header (Year, Month, Region, Segment,
+Category, Brand, Channel type, Town, Distributor, App User Tag). Anything
+selected there is sent as query parameters to every widget's Snowflake
+query — Region/Segment/Channel type/Distributor/App User Tag only apply to
+Secondary (Primary has no equivalent columns; see
+`client/src/context/FilterContext.jsx`'s handling and
+`shared/primaryQueries.js`'s `COLUMN_EXPR`). Clicking a bar to drill down
+(e.g. Category → Brand → SKU) re-queries scoped to that value instead of
+re-filtering already-fetched rows.
 
-## Chart types
+## Known data caveats
 
-Each chart uses a fixed, data-appropriate type rather than a switchable one:
-
-- **Net sales trend** — area/line (the one genuinely time-based chart)
-- **Business unit mix / Order source** — doughnut (composition of a whole)
-- **Channel type mix** — vertical bar (few, short-labeled categories)
-- **Category / Top towns / Top brands** — horizontal bar (ranked, longer labels)
-- **Distributor performance** — a sortable leaderboard table instead of a
-  chart, since 27 distributors with 8 metrics each reads better as a table
+- **Primary excludes `CANCELED = 'True'` rows** (~8.6% of `GOLD.ZFI_SCO_VW`,
+  ~Rs 8B) — a canceled invoice line isn't a real sale. Confirm this is
+  correct with the data team if primary figures look lower than expected
+  against a query that doesn't filter on it.
+- **Primary's `Region_Name` column is unusable** — it's populated from a
+  generic SAP country/subdivision reference table ("South Dakota", "Kabul",
+  "Paraiba" for a Pakistan-only business), so Primary has no Region filter
+  or dimension.
+- **Region filtering is disabled on the Month-over-Month table** for both
+  Primary and Secondary (per the data team, 2026-09-16) pending a proper
+  region mapping fix.
+- Secondary's App User Tag exclusion (`"SD"` / `"SD - OB"`) is a default
+  applied client-side, not a hard server-side filter — see
+  `client/src/context/FilterContext.jsx`.
 
 ## Deploying (Vercel, all-in-one)
 
 The whole app — static client + API — deploys to a single Vercel project.
-`vercel.json` handles the build; nothing else to configure. Two things worth
-understanding about how this differs from local dev:
-
-- **The API has no persistent disk on Vercel.** The `.xlsx` in `data/` is
-  bundled into the deployment (`vercel.json`'s `includeFiles`) and read
-  fresh from there — it does **not** watch for new files the way the local
-  server does.
-- **Updating data on Vercel = replace the file, commit, push.** Vercel
-  redeploys automatically (~1 min) and the new data is live. There's no
-  live-watching equivalent for a serverless deployment; if you want
-  upload-without-redeploy later, that needs real storage (e.g. Vercel Blob)
-  instead of a bundled file — ask if you want that built out.
-- Same origin, so the client just calls relative `/api/...` paths in
-  production — no environment variables needed for a single all-in-one
-  deployment. (`VITE_API_URL` in `client/.env.example` is only relevant if
-  you ever split the client and API into separate deployments.)
-
-## Notes
-
-- Column mapping and cleaning logic (dropping the trailing "Total:" row,
-  stripping the `[BU0000x]` suffix from Business Unit, adding year/month/date,
-  etc.) lives in `server/src/excelStore.js`. If a future export renames or
-  adds columns, that's the one file to touch.
-- The API serves the full parsed dataset as JSON (`GET /api/records`) plus
-  dimension option lists and summary totals (`GET /api/meta`); the frontend
-  does its own filtering/aggregation client-side from one shared filtered
-  dataset, which is plenty fast at this row count.
+`vercel.json` handles the build. Set the `SNOWFLAKE_*` environment variables
+above in the Vercel project settings — there's no bundled data file to
+configure, since every request queries Snowflake live. Same origin, so the
+client just calls relative `/api/...` paths in production — no
+`VITE_API_URL` needed for a single all-in-one deployment (only relevant if
+you split the client and API into separate deployments).

@@ -15,29 +15,28 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-function sumByDate(rows) {
-  const map = new Map();
-  for (const r of rows) {
-    if (!r.date) continue;
-    map.set(r.date, (map.get(r.date) || 0) + (r.netSales || 0));
-  }
-  return map;
+function toDateMap(trend) {
+  return new Map((trend || []).map((r) => [r.date, r.netSales || 0]));
 }
 
-export default function DualTrendChart({ secondaryRows, primaryRows, hueVarA, hueVarB, labelA = "Secondary", labelB = "Primary" }) {
+export default function DualTrendChart({ secondaryTrend, primaryTrend, hueVarA, hueVarB, labelA = "Secondary", labelB = "Primary" }) {
   const { show, hide } = useTooltip();
   const [hoverIdx, setHoverIdx] = useState(null);
 
   const { dates, secSeries, priSeries } = useMemo(() => {
-    const secMap = sumByDate(secondaryRows);
-    const priMap = sumByDate(primaryRows);
+    // Both sides arrive already grouped by date from the server now — both
+    // Primary and Secondary are Snowflake-backed (see hooks/useSecondaryTrend
+    // and hooks/usePrimaryTrend), too much history to ship raw rows for
+    // client-side summing the way the single-month Excel export allowed.
+    const secMap = toDateMap(secondaryTrend);
+    const priMap = toDateMap(primaryTrend);
     const dates = Array.from(new Set([...secMap.keys(), ...priMap.keys()])).sort();
     return {
       dates,
       secSeries: dates.map((d) => secMap.get(d) || 0),
       priSeries: dates.map((d) => priMap.get(d) || 0),
     };
-  }, [secondaryRows, primaryRows]);
+  }, [secondaryTrend, primaryTrend]);
 
   if (dates.length === 0) {
     return <div className="chart-empty">No data for current filters</div>;

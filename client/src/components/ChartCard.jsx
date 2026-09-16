@@ -1,8 +1,14 @@
 import { useMemo } from "react";
-import { aggregateTop, aggregateDualTop } from "../lib/aggregate";
+import { aggregateTop, aggregateDualTop, topNWithOther, mergeDualTop } from "../lib/aggregate";
 import { useDrill } from "../hooks/useDrill";
 import { useDrillPath } from "../hooks/useDrillPath";
 import { useElementWidth } from "../hooks/useElementWidth";
+import { useServerAggregate } from "../hooks/useServerAggregate";
+import { useSecondaryTrend } from "../hooks/useSecondaryTrend";
+import { usePrimaryTrend } from "../hooks/usePrimaryTrend";
+import { useFilters } from "../context/FilterContext";
+import { secondaryApi } from "../lib/secondaryApi";
+import { primaryApi } from "../lib/primaryApi";
 import { truncate } from "../lib/format";
 import { DIM_LABELS } from "../lib/hierarchies";
 import WidgetInfo from "./WidgetInfo";
@@ -31,15 +37,35 @@ const DUAL_TYPES = new Set(["dual-bar-h", "dual-trend"]);
 const SERIES_HUE_SECONDARY = "--hue-ch";
 const SERIES_HUE_PRIMARY = "--hue-bu";
 
+// Secondary sales is Snowflake-backed (see dashboard-query-reference.md and
+// the shared/secondaryQueries.js layer it maps to) — these charts fetch
+// their own pre-aggregated GROUP BY from the server instead of computing
+// from a client-held row array. Keyed by the chart's root `dim`.
+const SERVER_ENDPOINTS = {
+  chType: secondaryApi.channelType,
+  cat: secondaryApi.category,
+  brand: secondaryApi.brand,
+  region: secondaryApi.region,
+};
+// Primary is Snowflake-backed now too (GOLD.ZFI_SCO_VW) — only category and
+// brand have a primary equivalent; chType and region are secondary-only
+// concepts.
+const PRIMARY_SERVER_ENDPOINTS = {
+  cat: primaryApi.category,
+  brand: primaryApi.brand,
+};
+const NOOP_FETCH = () => Promise.resolve([]);
+
 export default function ChartCard({
   title,
   type,
   dim,
   hueVar,
   topN = 7,
-  rows,
-  secondaryRows,
-  primaryRows,
+  rows = [],
+  secondaryRows = [],
+  primaryRows = [],
+  useServerAgg = false,
   className = "",
   chartWidth,
   labelChars,
@@ -53,7 +79,10 @@ export default function ChartCard({
   fallbackQuery,
   badge,
 }) {
+  const { filters } = useFilters();
   const isDual = DUAL_TYPES.has(type);
+  const { trend: secondaryTrend } = useSecondaryTrend(filters, type === "dual-trend");
+  const { trend: primaryTrend } = usePrimaryTrend(filters, type === "dual-trend");
   const distinctDates = useMemo(() => (type === "trend" ? new Set(rows.map((r) => r.date)).size : 0), [rows, type]);
   const useFallback = type === "trend" && distinctDates <= 1 && fallbackDim;
   const effectiveType = useFallback ? "bar-h" : type;
@@ -88,15 +117,38 @@ export default function ChartCard({
 
   const aggDim = useHierarchy ? pathDrill.currentDim : effectiveDim;
 
+  // Only chType has a drill level (`channel`) that isn't itself a real
+  // global filter dimension — every other hierarchy level is kept in sync
+  // with the global filters by useDrillPath already, so the server query
+  // just needs `filters` + `aggDim`. See shared/secondaryQueries.js's
+  // groupByOne for the other half of this.
+  const channelParent = useServerAgg && dim === "chType" ? pathDrill.path.find((s) => s.dim === "channel")?.value : undefined;
+  const { data: serverAgg } = useServerAggregate(
+    useServerAgg ? SERVER_ENDPOINTS[dim] : NOOP_FETCH,
+    filters,
+    aggDim,
+    channelParent ? { channel: channelParent } : {}
+  );
+  // Primary's side of a dual chart — only relevant for cat/brand (chType and
+  // region have no primary equivalent), so PRIMARY_SERVER_ENDPOINTS[dim] is
+  // undefined for those and falls back to the no-op fetcher.
+  const { data: primaryServerAgg } = useServerAggregate(
+    useServerAgg && effectiveType === "dual-bar-h" ? PRIMARY_SERVER_ENDPOINTS[dim] || NOOP_FETCH : NOOP_FETCH,
+    filters,
+    aggDim
+  );
+
   const aggregated = useMemo(() => {
     if (!isAggType || effectiveType === "dual-bar-h") return null;
+    if (useServerAgg) return topNWithOther(serverAgg, effectiveTopN);
     return aggregateTop(scopedRows, aggDim, effectiveTopN);
-  }, [scopedRows, aggDim, effectiveTopN, isAggType, effectiveType]);
+  }, [scopedRows, aggDim, effectiveTopN, isAggType, effectiveType, useServerAgg, serverAgg]);
 
   const dualAggregated = useMemo(() => {
     if (effectiveType !== "dual-bar-h") return null;
+    if (useServerAgg) return mergeDualTop(serverAgg, primaryServerAgg, effectiveTopN);
     return aggregateDualTop(scopedSecondaryRows, scopedPrimaryRows, aggDim, effectiveTopN);
-  }, [effectiveType, scopedSecondaryRows, scopedPrimaryRows, aggDim, effectiveTopN]);
+  }, [effectiveType, scopedSecondaryRows, scopedPrimaryRows, aggDim, effectiveTopN, useServerAgg, serverAgg, primaryServerAgg]);
 
   const activeAggregated = dualAggregated || aggregated;
   const hasOther = activeAggregated?.some((r) => r.isOther);
@@ -212,7 +264,7 @@ export default function ChartCard({
           />
         )}
         {effectiveType === "dual-trend" && (
-          <DualTrendChart secondaryRows={secondaryRows} primaryRows={primaryRows} hueVarA={SERIES_HUE_SECONDARY} hueVarB={SERIES_HUE_PRIMARY} />
+          <DualTrendChart secondaryTrend={secondaryTrend} primaryTrend={primaryTrend} hueVarA={SERIES_HUE_SECONDARY} hueVarB={SERIES_HUE_PRIMARY} />
         )}
         {effectiveType === "pareto-line" && (
           <ParetoChart rows={rows} dim={effectiveDim} hueVar={hueVar} mode="line" onDrill={simpleDrill.onDrill} isActive={simpleDrill.isActive} />

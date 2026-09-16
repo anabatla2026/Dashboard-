@@ -1,54 +1,52 @@
-import { useData } from "../context/DataContext";
 import { useAnimatedNumber } from "../hooks/useAnimatedNumber";
+import { useSecondaryKpis } from "../hooks/useSecondaryKpis";
+import { usePrimaryKpis } from "../hooks/usePrimaryKpis";
 import { money, num } from "../lib/format";
-import { resolvePeriod, calcGoly, calcYtdGoly, periodDistinct, ytdDistinct, formatPeriod } from "../lib/period";
+import { formatPeriod } from "../lib/period";
 import { WalletIcon, BoxIcon } from "./Icons";
 import WidgetInfo from "./WidgetInfo";
 
 // Per MOM 2026-09-02 §1: KPI cards split into YTD/MTD × Primary/Secondary,
-// each showing Sales Value (PKR), Volume in Carton, Volume in Pcs, Total
-// Store Count, Productive Store Count, and Productive Distributor — with
-// volumes captured period-wise, not just cumulative. Built as 4 compact
-// stat-cards rather than ~24 separate tiles, per the same doc's own review
-// note capping a dashboard at 6–9 visuals.
+// each showing Sales Value (PKR) and Volume (Carton/Pcs) — Secondary also
+// shows Total/Productive store & distributor counts (Primary's source query
+// doesn't define an equivalent). Built as 4 compact stat-cards rather than
+// ~24 separate tiles, per the same doc's own review note capping a
+// dashboard at 6–9 visuals.
+//
+// Both sources are Snowflake-backed now (see useSecondaryKpis/usePrimaryKpis)
+// — the server resolves the period and computes every MTD/YTD/GOLY figure
+// directly, since neither table can be shipped whole to the browser for
+// client-side aggregation the way the original single-month Excel exports
+// were.
 
-function GolyBadge({ goly }) {
-  if (!goly) return null;
-  if (goly.pct === null) return <span className="goly-badge goly-na">No LY data</span>;
-  const up = goly.pct >= 0;
+function GolyBadge({ pct }) {
+  if (pct === undefined) return null;
+  if (pct === null) return <span className="goly-badge goly-na">No LY data</span>;
+  const up = pct >= 0;
   return (
     <span className={"goly-badge " + (up ? "goly-up" : "goly-down")}>
-      {up ? "▲" : "▼"} {Math.abs(goly.pct).toFixed(1)}% GOLY
+      {up ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}% GOLY
     </span>
   );
 }
 
-function StatRow({ label, value, goly }) {
+function StatRow({ label, value, golyPct }) {
   const animated = useAnimatedNumber(typeof value === "number" ? value : 0, 400);
   return (
     <div className="stat-row">
       <span className="stat-row-label">{label}</span>
       <span className="stat-row-value">{typeof value === "number" ? num(Math.round(animated)) : value}</span>
-      <GolyBadge goly={goly} />
+      <GolyBadge pct={golyPct} />
     </div>
   );
 }
 
-// One YTD-or-MTD × Primary-or-Secondary card, listing the 6 required stats.
-function PeriodCard({ title, hue, icon: Icon, rows, filters, mode, ctnKey, pcsKey, totalStoreCount, sourceTag, showStoreStats = true }) {
-  const golyFn = mode === "ytd" ? calcYtdGoly : calcGoly;
-  const period = resolvePeriod(rows, filters);
-
-  const valueGoly = golyFn(rows, filters, "netSales");
-  const ctnGoly = golyFn(rows, filters, ctnKey);
-  const pcsGoly = golyFn(rows, filters, pcsKey);
-
-  const productiveStores =
-    mode === "ytd" ? ytdDistinct(rows, period, "outletCode") : periodDistinct(rows, period?.year, period?.month, "outletCode");
-  const productiveDist =
-    mode === "ytd" ? ytdDistinct(rows, period, "dist") : periodDistinct(rows, period?.year, period?.month, "dist");
-
-  const salesVal = useAnimatedNumber(valueGoly?.cur || 0);
+// One YTD-or-MTD x Primary-or-Secondary card. The server has already
+// resolved the period and computed every stat for `mode` (mtd/ytd) — this
+// just renders it.
+function PeriodCard({ title, hue, icon: Icon, sourceTag, kpis, mode, period, showStoreStats }) {
+  const stats = kpis?.[mode];
+  const salesVal = useAnimatedNumber(stats?.salesValue || 0);
 
   return (
     <div className="period-card" style={{ "--tile-hue": `var(${hue})` }}>
@@ -66,16 +64,16 @@ function PeriodCard({ title, hue, icon: Icon, rows, filters, mode, ctnKey, pcsKe
         {money(salesVal)} <span className="period-card-unit">PKR</span>
       </div>
       <div className="period-card-golyline">
-        <GolyBadge goly={valueGoly} />
+        <GolyBadge pct={stats?.goly} />
       </div>
       <div className="stat-list">
-        <StatRow label="Volume (Carton)" value={ctnGoly?.cur ?? 0} goly={ctnGoly} />
-        <StatRow label="Volume (Pcs)" value={pcsGoly?.cur ?? 0} goly={pcsGoly} />
+        <StatRow label="Volume (Carton)" value={stats?.volumeCtn ?? 0} />
+        <StatRow label="Volume (Pcs)" value={stats?.volumePcs ?? 0} />
         {showStoreStats && (
           <>
-            <StatRow label="Total store count" value={totalStoreCount || 0} />
-            <StatRow label="Productive store count" value={productiveStores} />
-            <StatRow label="Productive distributor" value={productiveDist} />
+            <StatRow label="Total store count" value={kpis?.totalStoreCount || 0} />
+            <StatRow label="Productive store count" value={stats?.productiveStores ?? 0} />
+            <StatRow label="Productive distributor" value={stats?.productiveDistributors ?? 0} />
           </>
         )}
       </div>
@@ -83,12 +81,14 @@ function PeriodCard({ title, hue, icon: Icon, rows, filters, mode, ctnKey, pcsKe
   );
 }
 
-export default function KpiStrip({ allSecondaryRows, allPrimaryRows, filters }) {
-  const { secondaryMeta, primaryMeta } = useData();
-  const secAll = allSecondaryRows || [];
-  const priAll = allPrimaryRows || [];
-  const hasSecondary = secAll.length > 0;
-  const hasPrimary = priAll.length > 0;
+export default function KpiStrip({ filters }) {
+  const selectedYear = filters.year?.size === 1 ? [...filters.year][0] : undefined;
+  const selectedMonth = filters.month?.size === 1 ? [...filters.month][0] : undefined;
+
+  const { kpis: secKpis } = useSecondaryKpis({ year: selectedYear, month: selectedMonth, appUser: filters.appUser });
+  const { kpis: priKpis } = usePrimaryKpis({ year: selectedYear, month: selectedMonth });
+  const hasSecondary = !!secKpis;
+  const hasPrimary = !!priKpis;
 
   return (
     <div className="widget">
@@ -100,69 +100,23 @@ export default function KpiStrip({ allSecondaryRows, allPrimaryRows, filters }) 
         <div className="widget-controls">
           <WidgetInfo
             title="Overview"
-            summary="Four cards — Year-to-date and Month-to-date, each split by Primary (SAP) and Secondary (distributor) source. Sales Value, Volume (Carton), and Volume (Pcs) are period-wise figures (not cumulative except where YTD is explicitly cumulative from 1 July). Total store count is the full outlet roster for that source; Productive store count / Productive distributor are counts with at least one sale in the period shown."
+            summary="Four cards — Year-to-date and Month-to-date, each split by Primary (SAP) and Secondary (distributor) source. Sales Value, Volume (Carton), and Volume (Pcs) are period-wise figures (not cumulative except where YTD is explicitly cumulative from 1 July). Secondary also shows store/distributor coverage; Primary's source query doesn't define an equivalent."
             query="MTD = the resolved month (active Year+Month filter, else the latest month in the data). YTD = cumulative from 1 July (fiscal year start) through that month. GOLY = same period last year."
           />
         </div>
       </div>
       <div className="period-card-grid">
         {hasPrimary && (
-          <PeriodCard
-            title="YTD — Primary"
-            hue="--hue-bu"
-            icon={WalletIcon}
-            rows={priAll}
-            filters={filters}
-            mode="ytd"
-            ctnKey="ctn"
-            pcsKey="pcs"
-            totalStoreCount={primaryMeta?.outletCount}
-            sourceTag="Primary"
-            showStoreStats={false}
-          />
+          <PeriodCard title="YTD — Primary" hue="--hue-bu" icon={WalletIcon} sourceTag="Primary" kpis={priKpis} mode="ytd" period={priKpis.period} />
         )}
         {hasSecondary && (
-          <PeriodCard
-            title="YTD — Secondary"
-            hue="--hue-ch"
-            icon={WalletIcon}
-            rows={secAll}
-            filters={filters}
-            mode="ytd"
-            ctnKey="salesCtn"
-            pcsKey="units"
-            totalStoreCount={secondaryMeta?.outletCount}
-            sourceTag="Secondary"
-          />
+          <PeriodCard title="YTD — Secondary" hue="--hue-ch" icon={WalletIcon} sourceTag="Secondary" kpis={secKpis} mode="ytd" period={secKpis.period} showStoreStats />
         )}
         {hasPrimary && (
-          <PeriodCard
-            title="MTD — Primary"
-            hue="--hue-bu"
-            icon={BoxIcon}
-            rows={priAll}
-            filters={filters}
-            mode="mtd"
-            ctnKey="ctn"
-            pcsKey="pcs"
-            totalStoreCount={primaryMeta?.outletCount}
-            sourceTag="Primary"
-            showStoreStats={false}
-          />
+          <PeriodCard title="MTD — Primary" hue="--hue-bu" icon={BoxIcon} sourceTag="Primary" kpis={priKpis} mode="mtd" period={priKpis.period} />
         )}
         {hasSecondary && (
-          <PeriodCard
-            title="MTD — Secondary"
-            hue="--hue-ch"
-            icon={BoxIcon}
-            rows={secAll}
-            filters={filters}
-            mode="mtd"
-            ctnKey="salesCtn"
-            pcsKey="units"
-            totalStoreCount={secondaryMeta?.outletCount}
-            sourceTag="Secondary"
-          />
+          <PeriodCard title="MTD — Secondary" hue="--hue-ch" icon={BoxIcon} sourceTag="Secondary" kpis={secKpis} mode="mtd" period={secKpis.period} showStoreStats />
         )}
       </div>
     </div>

@@ -1,32 +1,42 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { apiUrl } from "../lib/api";
+import { secondaryApi } from "../lib/secondaryApi";
+import { primaryApi } from "../lib/primaryApi";
 
 const DataContext = createContext(null);
 
+// Both Primary (GOLD.ZFI_SCO_VW) and Secondary (GOLD.SALESFLO_DATADUMP_VW)
+// now live in Snowflake — too large to ship as raw rows the way the
+// original single-month Excel exports allowed. Every widget fetches its own
+// pre-aggregated slice from /api/primary/* or /api/secondary/* instead (see
+// hooks/useServerAggregate.js etc.); this context only carries the small
+// dimension-option lists and summary totals for each, plus `refreshKey` —
+// each widget's own fetch keys off it so the header's Refresh button still
+// forces every chart to re-query instead of just refreshing this context's
+// own dims/meta (Snowflake has no in-memory cache to invalidate the way the
+// old Excel file-watcher did; a real re-query is the only way to "refresh").
 export function DataProvider({ children }) {
-  const [primaryRows, setPrimaryRows] = useState([]);
-  const [secondaryRows, setSecondaryRows] = useState([]);
   const [primaryMeta, setPrimaryMeta] = useState(null);
+  const [primaryDims, setPrimaryDims] = useState(null);
   const [secondaryMeta, setSecondaryMeta] = useState(null);
+  const [secondaryDims, setSecondaryDims] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error | refreshing
   const [error, setError] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
     setStatus((s) => (s === "ready" ? "refreshing" : "loading"));
     setError(null);
     try {
-      const [metaRes, recordsRes] = await Promise.all([
-        fetch(apiUrl("/api/meta")),
-        fetch(apiUrl("/api/records")),
+      const [priDims, priMeta, secDims, secMeta] = await Promise.all([
+        primaryApi.dims(),
+        primaryApi.meta(),
+        secondaryApi.dims(),
+        secondaryApi.meta(),
       ]);
-      if (!metaRes.ok) throw new Error((await metaRes.json()).error || "Failed to load metadata");
-      if (!recordsRes.ok) throw new Error((await recordsRes.json()).error || "Failed to load records");
-      const [metaJson, recordsJson] = await Promise.all([metaRes.json(), recordsRes.json()]);
-
-      setPrimaryMeta(metaJson.primary || null);
-      setSecondaryMeta(metaJson.secondary || null);
-      setPrimaryRows(recordsJson.primary || []);
-      setSecondaryRows(recordsJson.secondary || []);
+      setPrimaryDims(priDims);
+      setPrimaryMeta(priMeta);
+      setSecondaryDims(secDims);
+      setSecondaryMeta(secMeta);
       setStatus("ready");
     } catch (err) {
       setError(err.message);
@@ -35,11 +45,7 @@ export function DataProvider({ children }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    try {
-      await fetch(apiUrl("/api/refresh"), { method: "POST" });
-    } catch {
-      // ignore — the GET calls below will surface any real problem
-    }
+    setRefreshKey((k) => k + 1);
     await load();
   }, [load]);
 
@@ -47,14 +53,9 @@ export function DataProvider({ children }) {
     load();
   }, [load]);
 
-  // rows / meta kept as aliases for the secondary source for backward compat
-  // with components that haven't been updated yet.
-  const rows = secondaryRows;
-  const meta = secondaryMeta;
-
   return (
     <DataContext.Provider
-      value={{ rows, meta, primaryRows, secondaryRows, primaryMeta, secondaryMeta, status, error, refresh }}
+      value={{ primaryMeta, primaryDims, secondaryMeta, secondaryDims, status, error, refresh, refreshKey }}
     >
       {children}
     </DataContext.Provider>

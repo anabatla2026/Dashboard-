@@ -51,6 +51,44 @@ export function aggregateDualTop(secRows, priRows, key, topN) {
   return arr;
 }
 
+// Applies the same top-N + "Other" bucketing as aggregateTop, but to an
+// already-grouped {label, value} list (e.g. from a server-side GROUP BY)
+// instead of raw transaction rows.
+export function topNWithOther(arr, topN) {
+  if (arr.length <= topN) return arr;
+  const head = arr.slice(0, topN);
+  const rest = arr.slice(topN).reduce((s, r) => s + r.value, 0);
+  if (rest > 0) head.push({ label: "Other", value: rest, isOther: true });
+  return head;
+}
+
+// Same shape as aggregateDualTop, but both sides arrive already grouped by
+// the server (see useServerAggregate) — both Primary and Secondary are
+// Snowflake-backed now, so neither needs summing raw rows client-side here.
+export function mergeDualTop(secondaryAgg, primaryAgg, topN) {
+  const secMap = new Map(secondaryAgg.map((r) => [r.label, r.value]));
+  const priMap = new Map(primaryAgg.map((r) => [r.label, r.value]));
+
+  const labels = new Set([...secMap.keys(), ...priMap.keys()]);
+  let arr = Array.from(labels, (label) => ({
+    label,
+    secondary: secMap.get(label) || 0,
+    primary: priMap.get(label) || 0,
+  }));
+  arr.sort((a, b) => b.secondary + b.primary - (a.secondary + a.primary));
+
+  if (arr.length > topN) {
+    const head = arr.slice(0, topN);
+    const rest = arr.slice(topN).reduce(
+      (acc, r) => ({ secondary: acc.secondary + r.secondary, primary: acc.primary + r.primary }),
+      { secondary: 0, primary: 0 }
+    );
+    if (rest.secondary + rest.primary > 0) head.push({ label: "Other", ...rest, isOther: true });
+    arr = head;
+  }
+  return arr;
+}
+
 export function aggregateTop(rows, key, topN) {
   const map = new Map();
   for (const r of rows) {

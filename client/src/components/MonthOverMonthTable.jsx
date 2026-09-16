@@ -1,69 +1,61 @@
 import { useMemo, useState } from "react";
 import { compact } from "../lib/format";
-import { calendarYearInFiscalYear, rowFiscalYear, FISCAL_MONTH_ORDER } from "../lib/period";
+import { FISCAL_MONTH_ORDER } from "../lib/period";
+import { useSecondaryMonthOverMonth, usePrimaryMonthOverMonth } from "../hooks/useMonthOverMonthServer";
 import WidgetInfo from "./WidgetInfo";
-import DimFilter from "./DimFilter";
 
 // Replaces the old Distributor Performance table per MOM 2026-09-02 §6.
-// Layout is exactly as specified: Month | Primary Sales Value | Secondary
-// Sales Value, filterable by Fiscal Year and Region — both as local
-// selectors on this widget itself, independent of the global filter bar
-// (rows passed in are pre-scoped by everything else, but not by
-// year/month/region — see App.jsx). Region only applies to secondary rows:
-// primary has no region field at all.
-function sumByFiscalMonth(rows, fyYear) {
+// Layout: Month | Primary Sales Value | Secondary Sales Value, filterable by
+// Fiscal Year (a local selector, independent of the global filter bar). Both
+// sides are Snowflake-backed (see hooks/useMonthOverMonthServer.js). The
+// Region selector this widget used to have has been removed — the DE asked
+// (2026-09-16) to disable Region on both Primary and Secondary's MoM for
+// now, pending a proper region mapping.
+function toMonthMap(rows) {
   const map = new Map(FISCAL_MONTH_ORDER.map((m) => [m, 0]));
-  for (const r of rows) {
-    if (!r.year || !r.month || !map.has(r.month)) continue;
-    if (calendarYearInFiscalYear(r.month, fyYear) !== r.year) continue;
-    map.set(r.month, map.get(r.month) + (r.netSales || 0));
-  }
+  for (const r of rows) map.set(r.month, (map.get(r.month) || 0) + (r.netSales || 0));
   return map;
 }
 
-function availableFiscalYears(rows) {
-  const years = new Set();
-  for (const r of rows) {
-    const fy = rowFiscalYear(r.year, r.month);
-    if (fy != null) years.add(fy);
-  }
-  return Array.from(years).sort((a, b) => b - a);
+// The fiscal year (1 July start) a given 'YYYY-MM-DD' date string falls in.
+function fyOfDateStr(s) {
+  const d = new Date(`${s}T00:00:00`);
+  return d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1;
 }
 
-export default function MonthOverMonthTable({ secondaryRows, primaryRows, regionOptions = [] }) {
-  const [selectedRegions, setSelectedRegions] = useState(new Set());
+function fiscalYearRange(dateRange) {
+  if (!dateRange?.min || !dateRange?.max) return [];
+  const from = fyOfDateStr(dateRange.min);
+  const to = fyOfDateStr(dateRange.max);
+  const years = [];
+  for (let y = to; y >= from; y--) years.push(y);
+  return years;
+}
 
-  const regionScopedSecondary = useMemo(
-    () => (selectedRegions.size === 0 ? secondaryRows : secondaryRows.filter((r) => selectedRegions.has(r.region))),
-    [secondaryRows, selectedRegions]
-  );
+export default function MonthOverMonthTable({ filters, secondaryDateRange, primaryDateRange }) {
+  const fyOptions = useMemo(() => {
+    const years = new Set([...fiscalYearRange(secondaryDateRange), ...fiscalYearRange(primaryDateRange)]);
+    return Array.from(years).sort((a, b) => b - a);
+  }, [secondaryDateRange, primaryDateRange]);
 
-  const fyOptions = useMemo(
-    () => availableFiscalYears([...regionScopedSecondary, ...primaryRows]),
-    [regionScopedSecondary, primaryRows]
-  );
   const [selectedFY, setSelectedFY] = useState(null);
   const fyYear = selectedFY != null && fyOptions.includes(selectedFY) ? selectedFY : fyOptions[0] ?? null;
+  const fiscalYearStart = fyYear != null ? `${fyYear}-07-01` : null;
 
-  const { priByMonth, secByMonth } = useMemo(
-    () => ({
-      priByMonth: sumByFiscalMonth(primaryRows, fyYear),
-      secByMonth: sumByFiscalMonth(regionScopedSecondary, fyYear),
-    }),
-    [primaryRows, regionScopedSecondary, fyYear]
-  );
+  const { mom: secMom } = useSecondaryMonthOverMonth({ fiscalYearStart, filters });
+  const { mom: priMom } = usePrimaryMonthOverMonth({ fiscalYearStart, filters });
+
+  const secByMonth = useMemo(() => toMonthMap(secMom), [secMom]);
+  const priByMonth = useMemo(() => toMonthMap(priMom), [priMom]);
 
   return (
     <div className="widget">
       <div className="widget-head">
         <div>
           <div className="widget-title">Month-over-Month Sales</div>
-          <div className="widget-sub">Primary &amp; Secondary — Region filter applies to Secondary only (no region field in primary)</div>
+          <div className="widget-sub">Primary &amp; Secondary</div>
         </div>
         <div className="widget-controls">
-          {regionOptions.length > 0 && (
-            <DimFilter label="Region" options={regionOptions} selected={selectedRegions} onChange={setSelectedRegions} />
-          )}
           {fyOptions.length > 0 && (
             <select
               className="fy-select"
@@ -80,8 +72,8 @@ export default function MonthOverMonthTable({ secondaryRows, primaryRows, region
           )}
           <WidgetInfo
             title="Month-over-Month Sales"
-            summary="Primary and Secondary net sales for every month of the selected fiscal year (1 July – 30 June), side by side. Replaces the old Distributor Performance table per the 2026-09-02 requirements review. Fiscal Year and Region are both local selectors on this widget, independent of the global filter bar — the fiscal year list is built from whatever years actually exist in the data, so it grows automatically as more is loaded. Region only narrows Secondary: Primary's SAP export has no region field."
-            query="SUM(netSales) grouped by fiscal month, primary vs secondary (secondary filtered by selected region), for the selected fiscal year."
+            summary="Primary and Secondary net sales for every month of the selected fiscal year (1 July – 30 June), side by side. Replaces the old Distributor Performance table per the 2026-09-02 requirements review. Fiscal Year is a local selector on this widget, independent of the global filter bar — the fiscal year list is built from each source's known date range, so it grows automatically as more is loaded. Region filtering is temporarily disabled on this widget pending a data mapping fix."
+            query="SUM(netSales) grouped by fiscal month, primary vs secondary, for the selected fiscal year."
           />
         </div>
       </div>

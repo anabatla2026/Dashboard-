@@ -1,38 +1,21 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { DIMS, applyFilters, emptyFilters, activeFilterCount } from "../lib/dims";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { DIMS, emptyFilters, activeFilterCount } from "../lib/dims";
 import { useData } from "./DataContext";
 
 const FilterContext = createContext(null);
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Dimensions that exist in primary data AND are safe to cross-filter with —
-// filters for other dims are skipped when filtering primary rows so they
-// don't accidentally exclude everything. Region/Distributor aren't included
-// even though primary now carries its own dist/town-level identity: SAP and
-// SalesFlo maintain separate master data for those and no reconciliation
-// mapping has been supplied yet (MOM 2026-09-02 §2) — filtering primary by a
-// secondary-sourced Region/Distributor value would silently misattribute
-// rows. Brand and Category names verifiably match across both sources.
-const PRIMARY_DIMS = new Set(["year", "month", "cat", "brand", "town"]);
-
 // The "SD" app-user tag (2026-08-31 requirement): its secondary sales rows
-// overstate real sales, so it's excluded by default everywhere. The raw
-// data's actual value is "SD - OB" — there's no bare "SD" value in the
-// export, so this is the closest match; flagged to the client for
-// confirmation. Kept out of emptyFilters()'s blank slate — see resetAll.
-const APP_USER_DEFAULT_EXCLUDE = new Set(["SD - OB"]);
-
-export function applyPrimaryFilters(rows, filters) {
-  const active = DIMS.filter(
-    (d) => PRIMARY_DIMS.has(d.key) && filters[d.key] && filters[d.key].size > 0
-  );
-  if (active.length === 0) return rows;
-  return rows.filter((r) => active.every((d) => filters[d.key].has(r[d.key])));
-}
+// overstate real sales, so it's excluded by default everywhere. The single-
+// month Excel export only ever contained "SD - OB"; the full Snowflake
+// history (back to 2022) also carries a bare "SD" value (~72k rows) that
+// this same rule should cover. Kept out of emptyFilters()'s blank slate —
+// see resetAll.
+const APP_USER_DEFAULT_EXCLUDE = new Set(["SD - OB", "SD"]);
 
 export function FilterProvider({ children }) {
-  const { rows, primaryRows } = useData();
+  const { secondaryDims, secondaryMeta } = useData();
   const [filters, setFilters] = useState(emptyFilters);
   const defaultsApplied = useRef(false);
   const defaultAppUsers = useRef(null); // every appUser value except the SD tag, computed once
@@ -50,19 +33,25 @@ export function FilterProvider({ children }) {
     setFilters(next);
   }, []);
 
-  // One-time defaults applied once secondary data is loaded: MTD view starts
-  // on the previous month (M-1), and the SD app-user tag starts excluded.
+  // One-time defaults applied once secondary dims/meta are loaded: MTD view
+  // starts on the previous month (M-1), and the SD app-user tag starts
+  // excluded. Both Primary and Secondary are Snowflake-backed now (see
+  // DataContext) — there's no raw row array to inspect any more, so "does
+  // last month have data" is approximated from Secondary's known date range
+  // instead of an exact per-(year,month) check.
   useEffect(() => {
-    if (defaultsApplied.current || rows.length === 0) return;
+    if (defaultsApplied.current || !secondaryDims || !secondaryMeta) return;
     defaultsApplied.current = true;
 
     const now = new Date();
     const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const prevYear = prevMonthDate.getFullYear();
     const prevMonthName = MONTH_SHORT[prevMonthDate.getMonth()];
-    const hasData = rows.some((r) => r.year === prevYear && r.month === prevMonthName);
+    const maxDate = secondaryMeta.dateRange?.max ? new Date(`${secondaryMeta.dateRange.max}T00:00:00`) : null;
+    const minDate = secondaryMeta.dateRange?.min ? new Date(`${secondaryMeta.dateRange.min}T00:00:00`) : null;
+    const hasData = !!maxDate && !!minDate && prevMonthDate >= minDate && prevMonthDate <= maxDate;
 
-    const allAppUsers = new Set(rows.map((r) => r.appUser).filter((v) => v != null && v !== ""));
+    const allAppUsers = new Set((secondaryDims.appUser || []).filter((v) => v != null && v !== ""));
     const appUserDefault = new Set([...allAppUsers].filter((v) => !APP_USER_DEFAULT_EXCLUDE.has(v)));
     defaultAppUsers.current = appUserDefault;
 
@@ -71,13 +60,8 @@ export function FilterProvider({ children }) {
       ...(hasData ? { year: new Set([prevYear]), month: new Set([prevMonthName]) } : {}),
       ...(appUserDefault.size > 0 ? { appUser: appUserDefault } : {}),
     }));
-  }, [rows]);
+  }, [secondaryDims, secondaryMeta]);
 
-  const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);
-  const filteredPrimaryRows = useMemo(
-    () => applyPrimaryFilters(primaryRows, filters),
-    [primaryRows, filters]
-  );
   const count = activeFilterCount(filters);
 
   const value = {
@@ -85,11 +69,7 @@ export function FilterProvider({ children }) {
     filters,
     setFilter,
     resetAll,
-    filteredRows,
-    filteredPrimaryRows,
     activeCount: count,
-    totalRows: rows.length,
-    totalPrimaryRows: primaryRows.length,
   };
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>;
