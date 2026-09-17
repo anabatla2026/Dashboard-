@@ -14,11 +14,20 @@ const DIST_MASTER = `${SNOWFLAKE_DATABASE}.GOLD.DISTRIBUTOR_MASTER_VW`;
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Dashboard filter key -> real column in SILVER.SALESFLO_DATADUMP (see
-// dashboard-query-reference.md §1 for the original Excel-era mapping this
-// mirrors).
+// The business labels a fiscal year (1 July - 30 June) by the calendar year
+// it ENDS in — e.g. Sep 2026 falls in "FY2027" (Jul 2026 - Jun 2027), not
+// "FY2026". This is the opposite of what the raw YEAR column gives you for
+// Jul-Dec rows, so every "year" filter/dimension value must be this derived
+// label, not YEAR itself. Confirmed against the DE's own query (2026-09-17),
+// which computes calendar_year as fiscal_year - 1 for Jul-Dec months.
+const FISCAL_YEAR_EXPR =
+  "(CASE WHEN MONTH IN ('Jul','Aug','Sep','Oct','Nov','Dec') THEN YEAR + 1 ELSE YEAR END)";
+
+// Dashboard filter key -> real column (or derived expression) in
+// SILVER.SALESFLO_DATADUMP (see dashboard-query-reference.md §1 for the
+// original Excel-era mapping this mirrors).
 const COLUMN_MAP = {
-  year: "YEAR",
+  year: FISCAL_YEAR_EXPR,
   month: "MONTH",
   region: "REGION",
   segment: "CHANNEL_GROUP",
@@ -67,12 +76,16 @@ function fiscalBounds(year, monthIdx0) {
   return { fyStart: `${fyYear}-07-01`, periodEnd };
 }
 
-// Resolves the "current" period exactly like client/src/lib/period.js
-// resolvePeriod(): the single Year+Month filter when set, otherwise the
-// latest (year, month) actually present in the table.
-async function resolvePeriod(year, month) {
-  if (year != null && month != null) {
-    return { year: Number(year), monthIdx0: MONTH_SHORT.indexOf(month), month };
+// Resolves the "current" period: the single Year+Month filter when set,
+// otherwise the latest (year, month) actually present in the table.
+// `fiscalYear` is the incoming Year filter value — a fiscal-year-END label
+// (see FISCAL_YEAR_EXPR above) — converted here to the actual calendar year
+// of the given month before any date-range math happens.
+async function resolvePeriod(fiscalYear, month) {
+  if (fiscalYear != null && month != null) {
+    const monthIdx0 = MONTH_SHORT.indexOf(month);
+    const year = monthIdx0 >= 6 ? Number(fiscalYear) - 1 : Number(fiscalYear);
+    return { year, monthIdx0, month };
   }
   const rows = await query(
     `SELECT TO_VARCHAR(MAX(DATE), 'YYYY-MM-DD') AS MAXD FROM ${SEC} WHERE DATE IS NOT NULL`

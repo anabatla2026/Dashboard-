@@ -1,6 +1,6 @@
 import { secondaryApi } from "../lib/secondaryApi";
 import { primaryApi } from "../lib/primaryApi";
-import { filtersToParam } from "../lib/filtersToParam";
+import { filtersToParam, pickPrimaryFilters } from "../lib/filtersToParam";
 import { useData } from "../context/DataContext";
 import { useServerQuery } from "./useServerQuery";
 
@@ -21,7 +21,7 @@ export function useSecondaryMonthOverMonth({ fiscalYearStart, filters }) {
 
 export function usePrimaryMonthOverMonth({ fiscalYearStart, filters }) {
   const { refreshKey } = useData();
-  const filtersParam = filtersToParam(filters);
+  const filtersParam = filtersToParam(pickPrimaryFilters(filters));
   const key = `${fiscalYearStart}|${JSON.stringify(filtersParam)}|${refreshKey}`;
   const { data, loading, error } = useServerQuery(
     () => (fiscalYearStart ? primaryApi.mom({ fiscalYearStart, filters: filtersParam }) : Promise.resolve([])),

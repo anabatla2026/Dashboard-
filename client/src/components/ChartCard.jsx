@@ -9,6 +9,7 @@ import { usePrimaryTrend } from "../hooks/usePrimaryTrend";
 import { useFilters } from "../context/FilterContext";
 import { secondaryApi } from "../lib/secondaryApi";
 import { primaryApi } from "../lib/primaryApi";
+import { pickPrimaryFilters } from "../lib/filtersToParam";
 import { truncate } from "../lib/format";
 import { DIM_LABELS } from "../lib/hierarchies";
 import WidgetInfo from "./WidgetInfo";
@@ -134,7 +135,7 @@ export default function ChartCard({
   // undefined for those and falls back to the no-op fetcher.
   const { data: primaryServerAgg } = useServerAggregate(
     useServerAgg && effectiveType === "dual-bar-h" ? PRIMARY_SERVER_ENDPOINTS[dim] || NOOP_FETCH : NOOP_FETCH,
-    filters,
+    pickPrimaryFilters(filters),
     aggDim
   );
 

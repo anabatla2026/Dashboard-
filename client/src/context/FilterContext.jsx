@@ -45,8 +45,14 @@ export function FilterProvider({ children }) {
 
     const now = new Date();
     const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const prevYear = prevMonthDate.getFullYear();
-    const prevMonthName = MONTH_SHORT[prevMonthDate.getMonth()];
+    const prevMonthIdx = prevMonthDate.getMonth();
+    // The Year filter is a fiscal-year-END label now (Sep 2026 -> "2027"),
+    // not the calendar year — see shared/secondaryQueries.js's
+    // FISCAL_YEAR_EXPR. Jul-Dec rows belong to the fiscal year ending the
+    // FOLLOWING calendar year; Jan-Jun rows belong to the one ending that
+    // same calendar year.
+    const prevYear = prevMonthIdx >= 6 ? prevMonthDate.getFullYear() + 1 : prevMonthDate.getFullYear();
+    const prevMonthName = MONTH_SHORT[prevMonthIdx];
     const maxDate = secondaryMeta.dateRange?.max ? new Date(`${secondaryMeta.dateRange.max}T00:00:00`) : null;
     const minDate = secondaryMeta.dateRange?.min ? new Date(`${secondaryMeta.dateRange.min}T00:00:00`) : null;
     const hasData = !!maxDate && !!minDate && prevMonthDate >= minDate && prevMonthDate <= maxDate;

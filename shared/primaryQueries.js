@@ -13,14 +13,27 @@ const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Se
 // confirm with the DE that excluding CANCELED = 'True' is correct.
 const VALIDITY = "CANCELED = 'False' AND Posting_Date IS NOT NULL";
 
+// The business labels a fiscal year (1 July - 30 June) by the calendar year
+// it ENDS in — e.g. Sep 2026 falls in "FY2027" (Jul 2026 - Jun 2027), not
+// "FY2026". This is the opposite of what YEAR(Posting_Date) gives you for
+// Jul-Dec rows, so every "year" filter/dimension value must be this derived
+// label. Confirmed against the DE's own query (2026-09-17), which computes
+// calendar_year as fiscal_year - 1 for Jul-Dec months.
+const FISCAL_YEAR_EXPR =
+  "(CASE WHEN TO_CHAR(Posting_Date, 'Mon') IN ('Jul','Aug','Sep','Oct','Nov','Dec') THEN YEAR(Posting_Date) + 1 ELSE YEAR(Posting_Date) END)";
+
 // Only year/month/cat/brand/town apply to primary (see
 // client/src/context/FilterContext.jsx's PRIMARY_DIMS) — Region_Name on
 // this view is unusable (populated from a generic SAP country/subdivision
 // table: "South Dakota", "Paraiba", "Kabul" for a Pakistan-only business)
 // and Distributor isn't reconciled between SAP and SalesFlo, so neither is
-// exposed as a primary filter dimension.
+// exposed as a primary filter dimension. App User Tag is a Secondary-only
+// concept (SalesFlo order-booker tagging) with no SAP equivalent, so it's
+// never in this map either — see client/src/lib/filtersToParam.js's
+// pickPrimaryFilters, which strips it (and other secondary-only keys)
+// before any primary API call, on top of this map simply not recognizing it.
 const COLUMN_EXPR = {
-  year: "YEAR(Posting_Date)",
+  year: FISCAL_YEAR_EXPR,
   month: "TO_CHAR(Posting_Date, 'Mon')",
   cat: "Material_Group_Name",
   brand: "Brand",
@@ -57,9 +70,14 @@ function fiscalBounds(year, monthIdx0) {
   return { fyStart: `${fyYear}-07-01`, periodEnd };
 }
 
-async function resolvePeriod(year, month) {
-  if (year != null && month != null) {
-    return { year: Number(year), monthIdx0: MONTH_SHORT.indexOf(month), month };
+// `fiscalYear` is the incoming Year filter value — a fiscal-year-END label
+// (see FISCAL_YEAR_EXPR above) — converted here to the actual calendar year
+// of the given month before any date-range math happens.
+async function resolvePeriod(fiscalYear, month) {
+  if (fiscalYear != null && month != null) {
+    const monthIdx0 = MONTH_SHORT.indexOf(month);
+    const year = monthIdx0 >= 6 ? Number(fiscalYear) - 1 : Number(fiscalYear);
+    return { year, monthIdx0, month };
   }
   const rows = await query(
     `SELECT TO_VARCHAR(MAX(Posting_Date), 'YYYY-MM-DD') AS MAXD FROM ${PRI} WHERE ${VALIDITY}`
