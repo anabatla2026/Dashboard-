@@ -9,14 +9,16 @@ export function filtersToParam(filters) {
   return out;
 }
 
-// Primary (GOLD.ZFI_SCO_VW) only recognizes year/month/cat/brand/town (see
+// Primary (GOLD.ZFI_SCO_VW) recognizes year/month/region/cat/brand/dist (see
 // shared/primaryQueries.js's COLUMN_EXPR) — its own buildWhere already
 // ignores any other key, so this isn't required for correctness, but every
-// primary fetch should pass through it anyway: it stops App User Tag,
-// Region, Segment, Channel Type, and Distributor changes (all
-// Secondary-only concepts) from triggering pointless primary re-fetches,
-// and makes it explicit/obvious that those never apply to Primary.
-const PRIMARY_FILTER_KEYS = ["year", "month", "cat", "brand", "town"];
+// primary fetch should pass through it anyway: it stops Segment, Channel
+// Type, Town, and App User Tag changes (all Secondary-only concepts) from
+// triggering pointless primary re-fetches, and makes it explicit/obvious
+// that those never apply to Primary. Per the DE's 2026-09-17 filter rules,
+// Region and Distributor now apply to Primary too (they didn't before), and
+// Town no longer does (it's Secondary-only going forward).
+const PRIMARY_FILTER_KEYS = ["year", "month", "region", "cat", "brand", "dist"];
 export function pickPrimaryFilters(filters) {
   const out = {};
   for (const key of PRIMARY_FILTER_KEYS) {

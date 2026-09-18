@@ -1,15 +1,16 @@
 import { secondaryApi } from "../lib/secondaryApi";
 import { useData } from "../context/DataContext";
 import { useServerQuery } from "./useServerQuery";
+import { filtersToParam } from "../lib/filtersToParam";
 
-export function useSecondaryKpis({ year, month, appUser }) {
+// KPI cards now apply the full global filter set (Region/Category/Brand/
+// Channel Type/Town/Distributor/App User Tag, plus multi-select Year/Month)
+// — see shared/secondaryQueries.js's getSecondaryKpis for the DE-matching
+// MTD/FYTD cross-filter logic this used to skip.
+export function useSecondaryKpis(filters) {
   const { refreshKey } = useData();
-  const appUserArr = appUser ? [...appUser] : undefined;
-  const key = `${year}|${month}|${appUserArr ? [...appUserArr].sort().join(",") : ""}|${refreshKey}`;
-  const { data, loading, error } = useServerQuery(
-    () => secondaryApi.kpis({ year, month, appUser: appUserArr }),
-    [key],
-    null
-  );
+  const param = filtersToParam(filters);
+  const key = `${JSON.stringify(param)}|${refreshKey}`;
+  const { data, loading, error } = useServerQuery(() => secondaryApi.kpis(param), [key], null);
   return { kpis: data, loading, error };
 }

@@ -100,8 +100,8 @@ export default function MonthOverMonthTable({ filters, secondaryDateRange, prima
                 return (
                   <tr key={m}>
                     <td className="strong">{m}</td>
-                    <td className="num">{pri > 0 ? compact(pri) : "—"}</td>
-                    <td className="num">{sec > 0 ? compact(sec) : "—"}</td>
+                    <td className="num">{pri > 0 ? compact(pri, 4) : "—"}</td>
+                    <td className="num">{sec > 0 ? compact(sec, 4) : "—"}</td>
                   </tr>
                 );
               })

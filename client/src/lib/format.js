@@ -1,18 +1,18 @@
 function trimZero(s) {
-  return s.replace(/\.0$/, "");
+  return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 }
 
-export function compact(n) {
+export function compact(n, decimals = 1) {
   const sign = n < 0 ? "-" : "";
   n = Math.abs(n);
-  if (n >= 1e9) return sign + trimZero((n / 1e9).toFixed(1)) + "B";
-  if (n >= 1e6) return sign + trimZero((n / 1e6).toFixed(1)) + "M";
-  if (n >= 1e3) return sign + trimZero((n / 1e3).toFixed(1)) + "K";
+  if (n >= 1e9) return sign + trimZero((n / 1e9).toFixed(decimals)) + "B";
+  if (n >= 1e6) return sign + trimZero((n / 1e6).toFixed(decimals)) + "M";
+  if (n >= 1e3) return sign + trimZero((n / 1e3).toFixed(decimals)) + "K";
   return sign + Math.round(n).toLocaleString("en-US");
 }
 
 export function money(n) {
-  return "Rs " + compact(n);
+  return "Rs " + compact(n, 3);
 }
 
 export function moneyFull(n) {

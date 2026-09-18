@@ -1,3 +1,23 @@
+> **⚠️ Superseded 2026-09-18.** The DE supplied proper Snowflake queries and
+> filter rules on 2026-09-17 (`primary 1st Dash with all filters.sql`,
+> `Secondary 1st Dash with all filters.sql`), now implemented in
+> `shared/filterOptions.js`, `shared/primaryQueries.js` and
+> `shared/secondaryQueries.js`. Notably, since this doc was written:
+> Region and Distributor now apply to Primary too (previously excluded —
+> §1's "no region field"/"IDs not reconciled" notes below no longer hold);
+> Town is now Secondary-only (no longer applies to Primary); Region/
+> Category/Distributor dropdown options and their backend filter values now
+> come from the DE's `GOLD.*_MAPPING_1ST_DASH` reference views instead of
+> each fact table's own distinct raw values (dropdown shows the friendly
+> *_NAME, the backend matches on *_CODE); and KPI cards (§2) now apply the
+> full global filter set and support true multi-select Year/Month summing,
+> rather than only Year/Month. The rest of this doc (aggregation shapes,
+> GOLY logic, drill hierarchies, §3.7's coverage widget) still reflects the
+> current implementation. Kept as historical record of the 2026-09-04
+> Excel-era review round — not re-generated wholesale to avoid introducing
+> transcription errors; treat the source files above as authoritative for
+> anything this note doesn't call out.
+
 # Sales Console — SQL Query Reference for Data Engineer Review
 
 **Purpose:** the actual aggregation logic behind every KPI card and chart, translated into SQL against the two fact tables below, for correctness review. There is no live SQL database behind the dashboard today (it runs client-side against parsed Excel rows) — this is the **equivalent SQL** a query against a proper warehouse table would need to produce the same numbers. Items marked **⚠️ Please confirm** are judgment calls made without an explicit spec.

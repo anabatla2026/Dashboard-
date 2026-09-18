@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronIcon } from "./Icons";
 
+// `options` accepts either plain strings (year/month/segment/appUser — value
+// and display label are the same) or { value, label } pairs (Region,
+// Category, Distributor — where the dropdown shows a friendly name but the
+// filter tracks/transmits the DE's mapping-table code, per the 2026-09-17
+// filter rules). Normalized to { value, label } here so the rest of the
+// component doesn't need to care which shape it got.
+function normalize(opt) {
+  return opt && typeof opt === "object" ? opt : { value: opt, label: opt };
+}
+
 export default function DimFilter({ label, options, selected, onChange }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -24,15 +34,16 @@ export default function DimFilter({ label, options, selected, onChange }) {
 
   if (!options || options.length === 0) return null;
 
+  const normalized = options.map(normalize);
   const count = selected.size;
   const filteredOptions = query.trim()
-    ? options.filter((o) => String(o).toLowerCase().includes(query.trim().toLowerCase()))
-    : options;
+    ? normalized.filter((o) => String(o.label).toLowerCase().includes(query.trim().toLowerCase()))
+    : normalized;
 
-  function toggle(opt) {
+  function toggle(value) {
     const next = new Set(selected);
-    if (next.has(opt)) next.delete(opt);
-    else next.add(opt);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
     onChange(next);
   }
 
@@ -60,7 +71,7 @@ export default function DimFilter({ label, options, selected, onChange }) {
             />
           )}
           <div className="dim-filter-actions">
-            <button type="button" onClick={() => onChange(new Set(options))}>
+            <button type="button" onClick={() => onChange(new Set(normalized.map((o) => o.value)))}>
               Select all
             </button>
             <button type="button" onClick={() => onChange(new Set())}>
@@ -70,9 +81,9 @@ export default function DimFilter({ label, options, selected, onChange }) {
           <div className="dim-filter-list">
             {filteredOptions.length === 0 && <div className="dim-filter-empty">No matches</div>}
             {filteredOptions.map((opt) => (
-              <label className="dim-filter-opt" key={String(opt)} title={String(opt)}>
-                <input type="checkbox" checked={selected.has(opt)} onChange={() => toggle(opt)} />
-                <span>{String(opt)}</span>
+              <label className="dim-filter-opt" key={String(opt.value)} title={String(opt.label)}>
+                <input type="checkbox" checked={selected.has(opt.value)} onChange={() => toggle(opt.value)} />
+                <span>{String(opt.label)}</span>
               </label>
             ))}
           </div>

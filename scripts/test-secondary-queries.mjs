@@ -19,8 +19,15 @@ function show(label, v) {
 const kpis = await getSecondaryKpis({});
 show("KPIs (latest period, all app users)", kpis);
 
-const kpisAug = await getSecondaryKpis({ year: 2026, month: "Aug", appUser: ["OB", "MDSD"] });
+const kpisAug = await getSecondaryKpis({
+  years: [2026],
+  months: ["Aug"],
+  filters: { appUser: ["OB", "MDSD"] },
+});
 show("KPIs (Aug 2026, appUser excluding SD/SD-OB)", kpisAug);
+
+const kpisMulti = await getSecondaryKpis({ years: [2025, 2026], months: ["Sep", "Nov"] });
+show("KPIs (multi-select years+months)", kpisMulti);
 
 const trend = await getSecondaryTrend({ year: [2026], month: ["Aug"] });
 show("Trend Aug 2026 (first 5 + count)", { count: trend.length, sample: trend.slice(0, 5) });

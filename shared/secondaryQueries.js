@@ -1,155 +1,184 @@
 import { query, SNOWFLAKE_DATABASE } from "./snowflakeClient.js";
 
-// The data engineering team has since published proper GOLD views over
-// these (2026-09-15) — querying them instead of the raw BRONZE/SILVER
-// tables directly. GOLD.salesflo_datadump_vw's REGION column is now also
-// remapped to match DISTRIBUTOR_MASTER_VW.NEW_REGION's taxonomy (the
-// original South/Central/North value is preserved separately as
-// DM_ORIGINAL_REGION), which is what makes getRegionTargetVsAchievement
-// below actually work now — previously REGION and NEW_REGION were disjoint
-// taxonomies that could never join.
 const SEC = `${SNOWFLAKE_DATABASE}.GOLD.SALESFLO_DATADUMP_VW`;
 const TARGETS = `${SNOWFLAKE_DATABASE}.GOLD.TARGETS_VW`;
 const DIST_MASTER = `${SNOWFLAKE_DATABASE}.GOLD.DISTRIBUTOR_MASTER_VW`;
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const FISCAL_MONTH_NO = { Jul: 1, Aug: 2, Sep: 3, Oct: 4, Nov: 5, Dec: 6, Jan: 7, Feb: 8, Mar: 9, Apr: 10, May: 11, Jun: 12 };
 
 // The business labels a fiscal year (1 July - 30 June) by the calendar year
 // it ENDS in — e.g. Sep 2026 falls in "FY2027" (Jul 2026 - Jun 2027), not
-// "FY2026". This is the opposite of what the raw YEAR column gives you for
-// Jul-Dec rows, so every "year" filter/dimension value must be this derived
-// label, not YEAR itself. Confirmed against the DE's own query (2026-09-17),
-// which computes calendar_year as fiscal_year - 1 for Jul-Dec months.
-const FISCAL_YEAR_EXPR =
-  "(CASE WHEN MONTH IN ('Jul','Aug','Sep','Oct','Nov','Dec') THEN YEAR + 1 ELSE YEAR END)";
+// "FY2026". Confirmed against the DE's own query (2026-09-17), which
+// computes calendar_year as fiscal_year - 1 for Jul-Dec months.
+const FISCAL_YEAR_EXPR = "(CASE WHEN MONTH IN ('Jul','Aug','Sep','Oct','Nov','Dec') THEN YEAR + 1 ELSE YEAR END)";
+// 1-12 fiscal month number (Jul=1 .. Jun=12), used for FYTD cutoff
+// comparisons — mirrors the DE's current_fy_month_no formula. MONTH here is
+// already the 3-letter name column, so this maps through a CASE rather than
+// doing calendar-month arithmetic like Primary's Posting_Date-based version.
+const FISCAL_MONTH_NO_EXPR = `(CASE MONTH
+  WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
+  WHEN 'Nov' THEN 5 WHEN 'Dec' THEN 6 WHEN 'Jan' THEN 7 WHEN 'Feb' THEN 8
+  WHEN 'Mar' THEN 9 WHEN 'Apr' THEN 10 WHEN 'May' THEN 11 WHEN 'Jun' THEN 12 END)`;
 
-// Dashboard filter key -> real column (or derived expression) in
-// SILVER.SALESFLO_DATADUMP (see dashboard-query-reference.md §1 for the
-// original Excel-era mapping this mirrors).
+// Dashboard filter key -> fact-table column(s) to match (OR'd when more than
+// one). Per the DE's filter rules (2026-09-17):
+//   region -> REGION (REGION_CODE from GOLD.VW_REGION_MAPPING_1ST_DASH is
+//             the same raw value stored in this column)
+//   cat    -> CATEGORY (CATEGORY_CODE from the category mapping view equals
+//             this column's raw value for Secondary-flagged rows)
+//   brand  -> BRAND (single shared column, no separate code)
+//   chType -> CHANNEL_TYPE (Secondary only, no separate code)
+//   town   -> TOWN_NAME (Secondary only, no separate code)
+//   dist   -> DISTRIBUTOR_CODE (the "D"-prefixed SalesFlo code — the same
+//             value GOLD.VW_DISTRIBUTOR_FILTER_1ST_DASH.DISTRIBUTOR_CODE
+//             transmits as the dropdown's value, see shared/filterOptions.js;
+//             DISTRIBUTOR_CODE_RD is a messier "reconciled SAP code" column
+//             — inconsistent formats incl. scientific-notation artifacts —
+//             not used here)
+// segment (Customer Group) and appUser (App User Tag) are pre-existing
+// filters the DE's new rules don't touch — left as-is.
 const COLUMN_MAP = {
-  year: FISCAL_YEAR_EXPR,
-  month: "MONTH",
-  region: "REGION",
-  segment: "CHANNEL_GROUP",
-  cat: "CATEGORY",
-  brand: "BRAND",
-  chType: "CHANNEL_TYPE",
-  town: "TOWN_NAME",
-  dist: "DISTRIBUTOR_NAME",
-  appUser: "APP_USER_TAGGED_TITLE",
+  year: [FISCAL_YEAR_EXPR],
+  month: ["MONTH"],
+  region: ["REGION"],
+  segment: ["CHANNEL_GROUP"],
+  cat: ["CATEGORY"],
+  brand: ["BRAND"],
+  chType: ["CHANNEL_TYPE"],
+  town: ["TOWN_NAME"],
+  dist: ["DISTRIBUTOR_CODE"],
+  appUser: ["APP_USER_TAGGED_TITLE"],
 };
+
+// The Distributor dropdown's value is GOLD.VW_DISTRIBUTOR_FILTER_1ST_DASH's
+// DISTRIBUTOR_CODE (see shared/filterOptions.js) — the "D"-prefixed SalesFlo
+// identifier for a real SalesFlo-registered distributor. 97 of 607 rows in
+// that view are Primary-only (no SalesFlo presence): DISTRIBUTOR_CODE falls
+// back to a plain numeric value there instead. Per the DE's rule, those
+// aren't valid Secondary filter values — pass them as null (here: an
+// unmatchable sentinel, so the filter still excludes everything rather than
+// silently being dropped) rather than let a coincidental numeric match
+// through against the fact table's own 337 non-"D" DISTRIBUTOR_CODE rows.
+function withResolvedDist(filters = {}) {
+  if (!Array.isArray(filters.dist) || filters.dist.length === 0) return filters;
+  const dCodes = filters.dist.filter((c) => typeof c === "string" && c.trim().toUpperCase().startsWith("D"));
+  return { ...filters, dist: dCodes.length ? dCodes : ["__NO_SECONDARY_MATCH__"] };
+}
 
 // Builds "AND col IN (?, ?) AND ..." plus the matching bind array, from a
 // filters object like { region: ["South"], cat: ["Baby Diapers", "Snacks"] }.
-// `skip` excludes dimensions the caller handles separately (e.g. a chart
-// already scoped by its own drill path, or year/month resolved into an
-// explicit date range instead of an IN clause).
+// `skip` excludes dimensions the caller handles separately. Always apply
+// withResolvedDist() to `filters` first if it may carry a `dist` selection.
 export function buildWhere(filters = {}, { skip = [] } = {}) {
   const clauses = [];
   const binds = [];
-  for (const [key, col] of Object.entries(COLUMN_MAP)) {
+  for (const [key, cols] of Object.entries(COLUMN_MAP)) {
     if (skip.includes(key)) continue;
     const values = filters[key];
     if (!Array.isArray(values) || values.length === 0) continue;
-    clauses.push(`${col} IN (${values.map(() => "?").join(", ")})`);
-    binds.push(...values);
+    const perCol = cols.map((c) => `${c} IN (${values.map(() => "?").join(", ")})`);
+    clauses.push(cols.length > 1 ? `(${perCol.join(" OR ")})` : perCol[0]);
+    for (const _c of cols) binds.push(...values);
   }
   return { clause: clauses.length ? "AND " + clauses.join(" AND ") : "", binds };
 }
 
-function pad2(n) {
-  return String(n).padStart(2, "0");
+function inList(values) {
+  return values.map(() => "?").join(", ");
 }
 
-// Last calendar day of (year, monthIdx0) as 'YYYY-MM-DD'.
-function monthBounds(year, monthIdx0) {
-  const start = `${year}-${pad2(monthIdx0 + 1)}-01`;
-  const lastDay = new Date(year, monthIdx0 + 1, 0).getDate();
-  const end = `${year}-${pad2(monthIdx0 + 1)}-${pad2(lastDay)}`;
-  return { start, end };
-}
-
-// Fiscal year runs 1 July - 30 June, same rule as client/src/lib/period.js.
-function fiscalBounds(year, monthIdx0) {
-  const fyYear = monthIdx0 >= 6 ? year : year - 1;
-  const { end: periodEnd } = monthBounds(year, monthIdx0);
-  return { fyStart: `${fyYear}-07-01`, periodEnd };
-}
-
-// Resolves the "current" period: the single Year+Month filter when set,
-// otherwise the latest (year, month) actually present in the table.
-// `fiscalYear` is the incoming Year filter value — a fiscal-year-END label
-// (see FISCAL_YEAR_EXPR above) — converted here to the actual calendar year
-// of the given month before any date-range math happens.
-async function resolvePeriod(fiscalYear, month) {
-  if (fiscalYear != null && month != null) {
-    const monthIdx0 = MONTH_SHORT.indexOf(month);
-    const year = monthIdx0 >= 6 ? Number(fiscalYear) - 1 : Number(fiscalYear);
-    return { year, monthIdx0, month };
-  }
-  const rows = await query(
-    `SELECT TO_VARCHAR(MAX(DATE), 'YYYY-MM-DD') AS MAXD FROM ${SEC} WHERE DATE IS NOT NULL`
-  );
+async function currentFiscal() {
+  const rows = await query(`SELECT TO_VARCHAR(MAX(DATE), 'YYYY-MM-DD') AS MAXD FROM ${SEC} WHERE DATE IS NOT NULL`);
   const maxd = rows[0]?.MAXD;
   if (!maxd) return null;
   const d = new Date(`${maxd}T00:00:00`);
-  return { year: d.getFullYear(), monthIdx0: d.getMonth(), month: MONTH_SHORT[d.getMonth()] };
+  const monthIdx0 = d.getMonth();
+  return {
+    fiscalYear: monthIdx0 >= 6 ? d.getFullYear() + 1 : d.getFullYear(),
+    month: MONTH_SHORT[monthIdx0],
+  };
+}
+
+// Resolves the selected Year/Month filters (each independently multi-
+// select) into the fiscal-year labels and month names to sum over — same
+// cross-filter semantics as shared/primaryQueries.js's resolvePeriod (see
+// that file's comment for the full rationale).
+async function resolvePeriod(years, months) {
+  const hasYears = Array.isArray(years) && years.length > 0;
+  const hasMonths = Array.isArray(months) && months.length > 0;
+  if (!hasYears && !hasMonths) {
+    const cur = await currentFiscal();
+    if (!cur) return null;
+    return { years: [cur.fiscalYear], mtdMonths: [cur.month], fytdMonths: [cur.month] };
+  }
+  const cur = hasMonths ? null : await currentFiscal();
+  const effYears = hasYears ? years.map(Number) : cur ? [cur.fiscalYear] : [];
+  const mtdMonths = hasMonths ? months : cur ? [cur.month] : [];
+  const fytdMonths = hasMonths ? months : hasYears ? ["Jun"] : cur ? [cur.month] : [];
+  if (effYears.length === 0 || mtdMonths.length === 0) return null;
+  return { years: effYears, mtdMonths, fytdMonths };
 }
 
 // ── KPI cards (Sales Value, Volume Ctn/Pcs, Productive Stores/Distributors,
-// GOLY) — only Year/Month (via period resolution) and the App User Tag
-// filter apply here; see dashboard-query-reference.md §2.6. ────────────────
-export async function getSecondaryKpis({ year, month, appUser } = {}) {
-  const period = await resolvePeriod(year, month);
+// GOLY), now scoped by every global filter the same way the DE's own KPI
+// query is (previously only Year/Month/App-User-Tag applied — see
+// dashboard-query-reference.md §2.6 — the DE's supplied query applies the
+// full filter set, so this now matches it). ────────────────────────────────
+export async function getSecondaryKpis({ years, months, filters = {} } = {}) {
+  const period = await resolvePeriod(years, months);
   if (!period) return null;
+  const { years: y, mtdMonths, fytdMonths } = period;
+  const lyYears = y.map((n) => n - 1);
+  const cutoffNo = Math.max(...fytdMonths.map((m) => FISCAL_MONTH_NO[m]));
 
-  const mtd = monthBounds(period.year, period.monthIdx0);
-  const lyMtd = monthBounds(period.year - 1, period.monthIdx0);
-  const { fyStart, periodEnd } = fiscalBounds(period.year, period.monthIdx0);
-  const lyFy = fiscalBounds(period.year - 1, period.monthIdx0);
-
-  const { clause: appUserClause, binds: appUserBinds } = buildWhere(
-    { appUser },
-    {}
-  );
+  const { clause, binds: filterBinds } = buildWhere(withResolvedDist(filters), { skip: ["year", "month"] });
 
   const sql = `
     SELECT
-      SUM(CASE WHEN DATE BETWEEN ? AND ? THEN NET_SALES END)  AS MTD_SALES,
-      SUM(CASE WHEN DATE BETWEEN ? AND ? THEN SALES_CTN END)  AS MTD_CTN,
-      SUM(CASE WHEN DATE BETWEEN ? AND ? THEN SALES_UNITS END) AS MTD_UNITS,
-      SUM(CASE WHEN DATE BETWEEN ? AND ? THEN NET_SALES END)  AS FYTD_SALES,
-      SUM(CASE WHEN DATE BETWEEN ? AND ? THEN SALES_CTN END)  AS FYTD_CTN,
-      SUM(CASE WHEN DATE BETWEEN ? AND ? THEN SALES_UNITS END) AS FYTD_UNITS,
-      SUM(CASE WHEN DATE BETWEEN ? AND ? THEN NET_SALES END)  AS LY_MTD_SALES,
-      SUM(CASE WHEN DATE BETWEEN ? AND ? THEN NET_SALES END)  AS LY_FYTD_SALES,
-      COUNT(DISTINCT CASE WHEN DATE BETWEEN ? AND ? THEN TRIM(OUTLET_CODE) END)      AS MTD_STORES,
-      COUNT(DISTINCT CASE WHEN DATE BETWEEN ? AND ? THEN TRIM(DISTRIBUTOR_CODE) END) AS MTD_DIST,
-      COUNT(DISTINCT CASE WHEN DATE BETWEEN ? AND ? THEN TRIM(OUTLET_CODE) END)      AS FYTD_STORES,
-      COUNT(DISTINCT CASE WHEN DATE BETWEEN ? AND ? THEN TRIM(DISTRIBUTOR_CODE) END) AS FYTD_DIST,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN NET_SALES END)  AS MTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN SALES_CTN END)  AS MTD_CTN,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN SALES_UNITS END) AS MTD_UNITS,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND MONTH IN (${inList(mtdMonths)}) THEN NET_SALES END) AS LY_MTD_SALES,
+      COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN TRIM(OUTLET_CODE) END)      AS MTD_STORES,
+      COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN TRIM(DISTRIBUTOR_CODE) END) AS MTD_DIST,
+
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN NET_SALES END)  AS FYTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN SALES_CTN END)  AS FYTD_CTN,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN SALES_UNITS END) AS FYTD_UNITS,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN NET_SALES END) AS LY_FYTD_SALES,
+      COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN TRIM(OUTLET_CODE) END)      AS FYTD_STORES,
+      COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN TRIM(DISTRIBUTOR_CODE) END) AS FYTD_DIST,
+
       COUNT(DISTINCT TRIM(OUTLET_CODE)) AS TOTAL_STORES
     FROM ${SEC}
     WHERE DATE IS NOT NULL
-    ${appUserClause}
+    ${clause}
   `;
-
   const binds = [
-    mtd.start, mtd.end, mtd.start, mtd.end, mtd.start, mtd.end,
-    fyStart, periodEnd, fyStart, periodEnd, fyStart, periodEnd,
-    lyMtd.start, lyMtd.end,
-    lyFy.fyStart, lyFy.periodEnd,
-    mtd.start, mtd.end, mtd.start, mtd.end,
-    fyStart, periodEnd, fyStart, periodEnd,
-    ...appUserBinds,
+    ...y, ...mtdMonths,
+    ...y, ...mtdMonths,
+    ...y, ...mtdMonths,
+    ...lyYears, ...mtdMonths,
+    ...y, ...mtdMonths,
+    ...y, ...mtdMonths,
+
+    ...y, cutoffNo,
+    ...y, cutoffNo,
+    ...y, cutoffNo,
+    ...lyYears, cutoffNo,
+    ...y, cutoffNo,
+    ...y, cutoffNo,
+
+    ...filterBinds,
   ];
 
   const rows = await query(sql, binds);
   const r = rows[0];
-
   const goly = (cur, ly) => (ly > 0 ? ((cur - ly) / ly) * 100 : null);
 
   return {
-    period: { year: period.year, month: period.month },
+    period: { years: y, months: mtdMonths },
     mtd: {
       salesValue: r.MTD_SALES || 0,
       volumeCtn: r.MTD_CTN || 0,
@@ -172,7 +201,7 @@ export async function getSecondaryKpis({ year, month, appUser } = {}) {
 
 // ── Daily net sales trend (§3.1) ────────────────────────────────────────────
 export async function getSecondaryTrend(filters = {}) {
-  const { clause, binds } = buildWhere(filters);
+  const { clause, binds } = buildWhere(withResolvedDist(filters));
   const rows = await query(
     `SELECT TO_VARCHAR(DATE, 'YYYY-MM-DD') AS DATE, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
@@ -185,15 +214,9 @@ export async function getSecondaryTrend(filters = {}) {
 }
 
 // ── Generic "group by one column, scoped by the active global filters"
-// query shared by every drillable chart. For hierarchy levels that are also
-// real global-filter dimensions (chType/cat/brand/region/town/dist), the
-// client keeps the global filter and the drill path in sync (see
-// useDrillPath's self-heal effect), so `filters` alone already scopes to
-// the selected parent value — no separate path plumbing needed. Only
-// `channel` (chType's child) isn't a real filter dimension, so it's the one
-// level that needs an explicit parent value passed through `extra`. ───────
+// query shared by every drillable chart. ────────────────────────────────────
 async function groupByOne(col, filters, extra = {}) {
-  const { clause, binds } = buildWhere(filters);
+  const { clause, binds } = buildWhere(withResolvedDist(filters));
   const extraClauses = [];
   const extraBinds = [];
   for (const [c, v] of Object.entries(extra)) {
@@ -214,17 +237,14 @@ async function groupByOne(col, filters, extra = {}) {
 }
 
 // ── Secondary Sales Value by Channel Type, with drill chType -> channel ->
-// subChannel (§3.2). `channel` narrows to the parent Channel value once
-// drilled past chType (chType itself is already applied via filters.chType). ─
+// subChannel (§3.2). ────────────────────────────────────────────────────────
 const CHANNEL_LEVEL_COL = { chType: "CHANNEL_TYPE", channel: "CHANNEL", subChannel: "SUB_CHANNEL" };
 export async function getByChannelType({ filters = {}, level = "chType", channel } = {}) {
   return groupByOne(CHANNEL_LEVEL_COL[level], filters, channel ? { CHANNEL: channel } : {});
 }
 
-// ── Net sales by Category (Secondary side only — Primary stays Excel-
-// sourced and is merged client-side), with drill cat -> brand -> sku (§3.3).
-// cat/brand are both global filter dims, so `filters` alone scopes each
-// level once drilled. ──────────────────────────────────────────────────────
+// ── Net sales by Category (Secondary side only), with drill cat -> brand ->
+// sku (§3.3). ────────────────────────────────────────────────────────────────
 const CAT_LEVEL_COL = { cat: "CATEGORY", brand: "BRAND", sku: "SKU_NAME" };
 export async function getByCategorySecondary({ filters = {}, level = "cat" } = {}) {
   return groupByOne(CAT_LEVEL_COL[level], filters);
@@ -237,25 +257,20 @@ export async function getByBrandSecondary({ filters = {}, level = "brand" } = {}
 }
 
 // ── Region-wise Achievement, with drill region -> town -> distributor
-// (§3.5). Target is fetched separately by getRegionTargetVsAchievement below
-// and merged client-side (see ChartCard's regionTarget wiring) now that the
-// region taxonomy on both sides actually matches. ──────────────────────────
+// (§3.5). ────────────────────────────────────────────────────────────────────
 const REGION_LEVEL_COL = { region: "REGION", town: "TOWN_NAME", dist: "DISTRIBUTOR_NAME" };
 export async function getRegionAchievement({ filters = {}, level = "region" } = {}) {
   return groupByOne(REGION_LEVEL_COL[level], filters);
 }
 
-// Region-wise Target vs Achievement for one resolved (year, month) — the
-// "region wise target Vs Achievements FINAL" query, generalized. TARGETS has
-// no region of its own; it's reached by joining its DIST_CODE to
-// DISTRIBUTOR_MASTER's NEW_REGION. Verified working 2026-09-15 once GOLD
-// remapped salesflo_datadump_vw.REGION onto the same taxonomy as
-// DISTRIBUTOR_MASTER_VW.NEW_REGION — every region now gets a real TARGET
-// and a real ACHIEVEMENT instead of one side always landing on 0.
+// Region-wise Target vs Achievement for one resolved (year, month) — TARGETS
+// has no region of its own; it's reached by joining its DIST_CODE to
+// DISTRIBUTOR_MASTER's NEW_REGION.
 export async function getRegionTargetVsAchievement({ year, month } = {}) {
-  const period = await resolvePeriod(year, month);
+  const period = await resolvePeriod(year != null ? [year] : [], month ? [month] : []);
   if (!period) return [];
-  const { start, end } = monthBounds(period.year, period.monthIdx0);
+  const y = period.years[0];
+  const m = period.mtdMonths[0];
 
   const rows = await query(
     `
@@ -274,7 +289,7 @@ export async function getRegionTargetVsAchievement({ year, month } = {}) {
     achievement_by_region AS (
       SELECT REGION, SUM(NET_SALES) AS ACHIEVEMENT
       FROM ${SEC}
-      WHERE DATE BETWEEN ? AND ?
+      WHERE ${FISCAL_YEAR_EXPR} = ? AND MONTH = ?
       GROUP BY REGION
     )
     SELECT COALESCE(t.REGION, a.REGION) AS REGION,
@@ -284,7 +299,7 @@ export async function getRegionTargetVsAchievement({ year, month } = {}) {
     FULL OUTER JOIN achievement_by_region a ON t.REGION = a.REGION
     ORDER BY ACHIEVEMENT DESC
     `,
-    [String(period.year), period.month, start, end]
+    [String(y), m, y, m]
   );
   return rows.map((r) => ({ region: r.REGION, target: r.TARGET || 0, achievement: r.ACHIEVEMENT || 0 }));
 }
@@ -295,7 +310,7 @@ export async function getRegionTargetVsAchievement({ year, month } = {}) {
 // for now, pending a proper region mapping; any `region` passed in is
 // ignored. ──────────────────────────────────────────────────────────────────
 export async function getMonthOverMonth({ fiscalYearStart, filters = {} } = {}) {
-  const { clause, binds } = buildWhere(filters, { skip: ["year", "month", "region"] });
+  const { clause, binds } = buildWhere(withResolvedDist(filters), { skip: ["year", "month", "region"] });
   const fyEndExclusive = `${Number(fiscalYearStart.slice(0, 4)) + 1}-${fiscalYearStart.slice(5)}`;
 
   const rows = await query(
@@ -313,16 +328,15 @@ export async function getMonthOverMonth({ fiscalYearStart, filters = {} } = {}) 
   return rows.map((r) => ({ month: r.MONTH, year: r.YEAR, netSales: r.NET_SALES || 0 }));
 }
 
-// ── Distinct filter-option lists, for populating the global filter bar
-// without shipping raw rows. ────────────────────────────────────────────────
+// ── Distinct Year/Month/Segment/App-User-Tag option lists. Region/Category/
+// Brand/ChannelType/Town/Distributor dropdown options now come from
+// shared/filterOptions.js (the DE's mapping views) instead of this fact
+// table's own distinct values. ──────────────────────────────────────────────
 export async function getSecondaryDims() {
-  const dims = ["region", "segment", "cat", "brand", "chType", "town", "dist", "appUser", "year", "month"];
+  const dims = { year: FISCAL_YEAR_EXPR, month: "MONTH", segment: "CHANNEL_GROUP", appUser: "APP_USER_TAGGED_TITLE" };
   const result = {};
-  for (const key of dims) {
-    const col = COLUMN_MAP[key];
-    const rows = await query(
-      `SELECT DISTINCT ${col} AS V FROM ${SEC} WHERE ${col} IS NOT NULL ORDER BY ${col}`
-    );
+  for (const [key, col] of Object.entries(dims)) {
+    const rows = await query(`SELECT DISTINCT ${col} AS V FROM ${SEC} WHERE ${col} IS NOT NULL ORDER BY ${col}`);
     result[key] = rows.map((r) => r.V);
   }
   result.month.sort((a, b) => MONTH_SHORT.indexOf(a) - MONTH_SHORT.indexOf(b));

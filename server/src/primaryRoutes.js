@@ -27,12 +27,10 @@ const router = express.Router();
 
 router.get(
   "/kpis",
-  wrap((req) =>
-    getPrimaryKpis({
-      year: req.query.year ? Number(req.query.year) : undefined,
-      month: req.query.month || undefined,
-    })
-  )
+  wrap((req) => {
+    const filters = parseFilters(req);
+    return getPrimaryKpis({ years: filters.year, months: filters.month, filters });
+  })
 );
 
 router.get("/trend", wrap((req) => getPrimaryTrend(parseFilters(req))));

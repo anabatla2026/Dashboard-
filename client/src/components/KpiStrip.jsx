@@ -82,11 +82,8 @@ function PeriodCard({ title, hue, icon: Icon, sourceTag, kpis, mode, period, sho
 }
 
 export default function KpiStrip({ filters }) {
-  const selectedYear = filters.year?.size === 1 ? [...filters.year][0] : undefined;
-  const selectedMonth = filters.month?.size === 1 ? [...filters.month][0] : undefined;
-
-  const { kpis: secKpis } = useSecondaryKpis({ year: selectedYear, month: selectedMonth, appUser: filters.appUser });
-  const { kpis: priKpis } = usePrimaryKpis({ year: selectedYear, month: selectedMonth });
+  const { kpis: secKpis } = useSecondaryKpis(filters);
+  const { kpis: priKpis } = usePrimaryKpis(filters);
   const hasSecondary = !!secKpis;
   const hasPrimary = !!priKpis;
 

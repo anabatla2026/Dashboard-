@@ -76,8 +76,19 @@ export function calcYtdGoly(rows, filters, key = "netSales") {
   return { period, cur, ly, pct: ly > 0 ? ((cur - ly) / ly) * 100 : null };
 }
 
+// Accepts either the legacy single { year, month } shape or the multi-
+// select { years, months } shape the server's KPI endpoints now return
+// (see shared/primaryQueries.js / shared/secondaryQueries.js's
+// getPrimaryKpis/getSecondaryKpis) — multiple selected months/years render
+// as a comma list, e.g. "Sep, Nov 2025, 2026".
 export function formatPeriod(period) {
-  return period ? `${period.month} ${period.year}` : "—";
+  if (!period) return "—";
+  if (period.years || period.months) {
+    const months = (period.months || []).join(", ");
+    const years = (period.years || []).join(", ");
+    return [months, years].filter(Boolean).join(" ") || "—";
+  }
+  return `${period.month} ${period.year}`;
 }
 
 // The calendar year the fiscal year (1 July start) containing `period` began in.

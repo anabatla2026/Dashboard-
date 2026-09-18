@@ -11,7 +11,7 @@ import {
   getSecondaryDims,
   getSecondaryMeta,
 } from "../../shared/secondaryQueries.js";
-import { parseFilters as parseFiltersRaw, parseArray } from "../../shared/httpParams.js";
+import { parseFilters as parseFiltersRaw } from "../../shared/httpParams.js";
 
 const parseFilters = (req) => parseFiltersRaw(req.query);
 
@@ -30,13 +30,10 @@ const router = express.Router();
 
 router.get(
   "/kpis",
-  wrap((req) =>
-    getSecondaryKpis({
-      year: req.query.year ? Number(req.query.year) : undefined,
-      month: req.query.month || undefined,
-      appUser: parseArray(req.query.appUser),
-    })
-  )
+  wrap((req) => {
+    const filters = parseFilters(req);
+    return getSecondaryKpis({ years: filters.year, months: filters.month, filters });
+  })
 );
 
 router.get("/trend", wrap((req) => getSecondaryTrend(parseFilters(req))));

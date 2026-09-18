@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { secondaryApi } from "../lib/secondaryApi";
 import { primaryApi } from "../lib/primaryApi";
+import { fetchFilterOptions } from "../lib/filterOptionsApi";
 
 const DataContext = createContext(null);
 
@@ -19,6 +20,7 @@ export function DataProvider({ children }) {
   const [primaryDims, setPrimaryDims] = useState(null);
   const [secondaryMeta, setSecondaryMeta] = useState(null);
   const [secondaryDims, setSecondaryDims] = useState(null);
+  const [filterOptions, setFilterOptions] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error | refreshing
   const [error, setError] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -27,16 +29,18 @@ export function DataProvider({ children }) {
     setStatus((s) => (s === "ready" ? "refreshing" : "loading"));
     setError(null);
     try {
-      const [priDims, priMeta, secDims, secMeta] = await Promise.all([
+      const [priDims, priMeta, secDims, secMeta, options] = await Promise.all([
         primaryApi.dims(),
         primaryApi.meta(),
         secondaryApi.dims(),
         secondaryApi.meta(),
+        fetchFilterOptions(),
       ]);
       setPrimaryDims(priDims);
       setPrimaryMeta(priMeta);
       setSecondaryDims(secDims);
       setSecondaryMeta(secMeta);
+      setFilterOptions(options);
       setStatus("ready");
     } catch (err) {
       setError(err.message);
@@ -55,7 +59,7 @@ export function DataProvider({ children }) {
 
   return (
     <DataContext.Provider
-      value={{ primaryMeta, primaryDims, secondaryMeta, secondaryDims, status, error, refresh, refreshKey }}
+      value={{ primaryMeta, primaryDims, secondaryMeta, secondaryDims, filterOptions, status, error, refresh, refreshKey }}
     >
       {children}
     </DataContext.Provider>

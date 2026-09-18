@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFilters } from "../context/FilterContext";
+import { useData } from "../context/DataContext";
 import { DRILLABLE } from "../lib/dims";
 import { levelsFor } from "../lib/hierarchies";
+import { makeDimResolver } from "../lib/filterValueResolver";
 
 // Drives a chart's in-place hierarchy navigation (e.g. Category -> Brand ->
 // SKU): clicking a mark advances the chart to the next level, scoped to
@@ -10,10 +12,17 @@ import { levelsFor } from "../lib/hierarchies";
 // dashboard too (same mechanism the plain useDrill hook uses) — the two
 // stay in sync in both directions: clearing the dimension's global filter
 // (via the filter bar, or "Clear all") snaps the breadcrumb back to match.
+//
+// Charts group by (and display) the DE's friendly NAME for cat/dist, but
+// the global filter tracks the mapping table's CODE for those dims (see
+// shared/filterOptions.js) — each path step keeps both: `value` is what's
+// written to/compared against filters[dim], `label` is what the breadcrumb
+// shows (see lib/filterValueResolver.js).
 export function useDrillPath(rootDim) {
   const { filters, setFilter } = useFilters();
+  const { filterOptions } = useData();
   const levels = useMemo(() => levelsFor(rootDim), [rootDim]);
-  const [path, setPath] = useState([]); // [{ dim, value }, ...]
+  const [path, setPath] = useState([]); // [{ dim, value, label }, ...]
 
   // Self-heal: if a global filter this path depends on was cleared or
   // changed elsewhere (dropdown, "Clear all"), collapse the local path to
@@ -43,18 +52,21 @@ export function useDrillPath(rootDim) {
   const atLeaf = depth >= levels.length - 1;
   const currentDim = levels[Math.min(depth, levels.length - 1)];
   const currentActiveSet = DRILLABLE.has(currentDim) ? filters[currentDim] : null;
+  const { toValue } = makeDimResolver(filterOptions, currentDim);
 
   const onDrill = useCallback(
-    (value) => {
+    (label) => {
+      const value = toValue(label);
       // Re-clicking the sole active value at this level clears it (drill back out one step).
       if (currentActiveSet && currentActiveSet.size === 1 && currentActiveSet.has(value)) {
         if (DRILLABLE.has(currentDim)) setFilter(currentDim, new Set());
         return;
       }
       if (DRILLABLE.has(currentDim)) setFilter(currentDim, new Set([value]));
-      if (!atLeaf) setPath((p) => [...p, { dim: currentDim, value }]);
+      if (!atLeaf) setPath((p) => [...p, { dim: currentDim, value, label }]);
     },
-    [currentDim, currentActiveSet, atLeaf, setFilter],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentDim, currentActiveSet, atLeaf, setFilter, toValue],
   );
 
   const goTo = useCallback(
@@ -69,8 +81,8 @@ export function useDrillPath(rootDim) {
     [path, setFilter],
   );
 
-  function isActive(value) {
-    return !!currentActiveSet && currentActiveSet.has(value);
+  function isActive(label) {
+    return !!currentActiveSet && currentActiveSet.has(toValue(label));
   }
 
   return {

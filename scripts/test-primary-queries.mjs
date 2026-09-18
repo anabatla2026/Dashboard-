@@ -14,7 +14,8 @@ function show(label, v) {
 }
 
 show("KPIs (latest period)", await getPrimaryKpis({}));
-show("KPIs (Aug 2026)", await getPrimaryKpis({ year: 2026, month: "Aug" }));
+show("KPIs (Aug 2026)", await getPrimaryKpis({ years: [2026], months: ["Aug"] }));
+show("KPIs (multi-select years+months)", await getPrimaryKpis({ years: [2025, 2026], months: ["Aug", "Sep"] }));
 
 const trend = await getPrimaryTrend({ year: [2026], month: ["Aug"] });
 show("Trend Aug 2026", { count: trend.length, sample: trend.slice(0, 3) });

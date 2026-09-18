@@ -15,20 +15,18 @@ import {
   getSecondaryDims,
   getSecondaryMeta,
 } from "../../shared/secondaryQueries.js";
-import { parseFilters, parseArray } from "../../shared/httpParams.js";
+import { parseFilters } from "../../shared/httpParams.js";
 
 export default async function handler(req, res) {
   const { action } = req.query;
   try {
     let data;
     switch (action) {
-      case "kpis":
-        data = await getSecondaryKpis({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          month: req.query.month || undefined,
-          appUser: parseArray(req.query.appUser),
-        });
+      case "kpis": {
+        const filters = parseFilters(req.query);
+        data = await getSecondaryKpis({ years: filters.year, months: filters.month, filters });
         break;
+      }
       case "trend":
         data = await getSecondaryTrend(parseFilters(req.query));
         break;

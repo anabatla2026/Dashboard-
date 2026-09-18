@@ -20,12 +20,11 @@ export default async function handler(req, res) {
   try {
     let data;
     switch (action) {
-      case "kpis":
-        data = await getPrimaryKpis({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          month: req.query.month || undefined,
-        });
+      case "kpis": {
+        const filters = parseFilters(req.query);
+        data = await getPrimaryKpis({ years: filters.year, months: filters.month, filters });
         break;
+      }
       case "trend":
         data = await getPrimaryTrend(parseFilters(req.query));
         break;

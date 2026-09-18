@@ -13,7 +13,7 @@ async function get(path, params = {}) {
 }
 
 export const primaryApi = {
-  kpis: ({ year, month }) => get("kpis", { year, month }),
+  kpis: (filters) => get("kpis", { filters }),
   trend: (filters) => get("trend", { filters }),
   category: ({ filters, level }) => get("category", { filters, level }),
   brand: ({ filters, level }) => get("brand", { filters, level }),

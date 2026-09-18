@@ -10,8 +10,8 @@ export default function Breadcrumb({ path, currentDim, goTo }) {
       {path.map((step, i) => (
         <span className="crumb-item" key={i}>
           <span className="crumb-sep">›</span>
-          <button type="button" className="crumb" onClick={() => goTo(i)} title={String(step.value)}>
-            {truncate(String(step.value), 14)}
+          <button type="button" className="crumb" onClick={() => goTo(i)} title={String(step.label ?? step.value)}>
+            {truncate(String(step.label ?? step.value), 14)}
           </button>
         </span>
       ))}
