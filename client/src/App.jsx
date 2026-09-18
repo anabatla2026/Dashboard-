@@ -139,12 +139,6 @@ function Dashboard() {
   const { secondaryMeta, primaryMeta } = useData();
   const { filters } = useFilters();
 
-  // Same period-resolution rule as the KPI cards: the active single
-  // Year+Month filter, or (when unset) the server resolves the latest
-  // period itself.
-  const selectedYear = filters.year?.size === 1 ? [...filters.year][0] : undefined;
-  const selectedMonth = filters.month?.size === 1 ? [...filters.month][0] : undefined;
-
   return (
     <div className="container">
       {/* ── KPI Overview ── */}
@@ -159,7 +153,7 @@ function Dashboard() {
           section={section}
           extra={
             section.id === "region-section" ? (
-              <RegionTargetChart year={selectedYear} month={selectedMonth} className="span-4 size-sm" />
+              <RegionTargetChart filters={filters} className="span-4 size-sm" />
             ) : undefined
           }
         />

@@ -308,45 +308,102 @@ export async function getRegionAchievement({ filters = {}, level = "region" } = 
   return groupByOne(REGION_LEVEL_COL[level], filters);
 }
 
-// Region-wise Target vs Achievement for one resolved (year, month) — TARGETS
-// has no region of its own; it's reached by joining its DIST_CODE to
-// DISTRIBUTOR_MASTER's NEW_REGION.
-export async function getRegionTargetVsAchievement({ year, month } = {}) {
-  const period = await resolvePeriod(year != null ? [year] : [], month ? [month] : []);
-  if (!period) return [];
-  const y = period.years[0];
-  const m = period.mtdMonths[0];
+// Region-wise Target vs Achievement, MTD + FYTD, multi-select Year/Month —
+// matches the DE's "SECONDARY KPI #7" reference query exactly (2026-09-18).
+// Filters are deliberately ONLY Year/Month, per that query's own comment
+// ("Filters: ONLY v_years + v_months") — no region/category/brand/etc.
+//
+// TARGETS_VW.TARGET_YEAR/TARGET_MONTH store the plain CALENDAR year/month
+// of the target, not the fiscal-year-END label used everywhere else on
+// this dashboard (confirmed 2026-09-18: its only loaded data today is
+// TARGET_YEAR='2026', TARGET_MONTH='Aug' — calendar Aug 2026). Each
+// selected fiscal (year, month) has to be converted to its calendar
+// equivalent before matching — Jul-Dec months belong to the fiscal year
+// AFTER their calendar year, Jan-Jun months' calendar year equals the
+// fiscal label itself — which is what toCalendarPairs does below, mirroring
+// the DE's targets_cal_map_mtd/targets_cal_map_fytd CTEs.
+//
+// Note the DE's query computes the FYTD *target* from the raw selected/
+// default fytd_month_nos directly (not expanded into every month from July
+// through the cutoff the way FYTD *achievement* is) — so with today's
+// single-month TARGETS_VW dataset, targetFytd and targetMtd are
+// numerically identical for the default (no filter) case. That's the DE's
+// own query's behavior, reproduced faithfully here rather than "corrected"
+// into a different interpretation.
+const TARGET_CALENDAR_MONTHS = new Set(["Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]);
+function toCalendarPairs(years, months) {
+  const seen = new Set();
+  const pairs = [];
+  for (const y of years) {
+    for (const m of months) {
+      const calYear = TARGET_CALENDAR_MONTHS.has(m) ? y - 1 : y;
+      const calMonth = m.toUpperCase();
+      const key = `${calYear}|${calMonth}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pairs.push([calYear, calMonth]);
+    }
+  }
+  return pairs;
+}
 
+async function targetsByRegion(calendarPairs) {
+  if (calendarPairs.length === 0) return [];
+  const clause = calendarPairs.map(() => "(TRY_TO_NUMBER(t.TARGET_YEAR) = ? AND UPPER(TRIM(t.TARGET_MONTH)) = ?)").join(" OR ");
+  const binds = calendarPairs.flat();
   const rows = await query(
     `
     WITH targets_agg AS (
-      SELECT TRIM(t.DIST_CODE) AS DISTRIBUTOR_CODE, SUM(t.VALUE) AS TOTAL_TARGET
+      SELECT TRIM(t.DIST_CODE) AS DISTRIBUTOR_CODE, SUM(TRY_TO_NUMBER(t.VALUE)) AS TOTAL_TARGET
       FROM ${TARGETS} t
-      WHERE t.TARGET_YEAR = ? AND t.TARGET_MONTH = ?
+      WHERE ${clause}
       GROUP BY TRIM(t.DIST_CODE)
-    ),
-    targets_by_region AS (
-      SELECT d.NEW_REGION AS REGION, SUM(ta.TOTAL_TARGET) AS TARGET
-      FROM targets_agg ta
-      JOIN ${DIST_MASTER} d ON ta.DISTRIBUTOR_CODE = TRIM(d.DISTRIBUTOR_CODE)
-      GROUP BY d.NEW_REGION
-    ),
-    achievement_by_region AS (
-      SELECT REGION, SUM(NET_SALES) AS ACHIEVEMENT
-      FROM ${SEC}
-      WHERE ${FISCAL_YEAR_EXPR} = ? AND MONTH = ? AND ${STANDING_FILTER}
-      GROUP BY REGION
     )
-    SELECT COALESCE(t.REGION, a.REGION) AS REGION,
-           COALESCE(t.TARGET, 0) AS TARGET,
-           COALESCE(a.ACHIEVEMENT, 0) AS ACHIEVEMENT
-    FROM targets_by_region t
-    FULL OUTER JOIN achievement_by_region a ON t.REGION = a.REGION
-    ORDER BY ACHIEVEMENT DESC
+    SELECT d.NEW_REGION AS REGION, SUM(ta.TOTAL_TARGET) AS TARGET
+    FROM targets_agg ta
+    JOIN ${DIST_MASTER} d ON ta.DISTRIBUTOR_CODE = TRIM(d.DISTRIBUTOR_CODE)
+    GROUP BY d.NEW_REGION
     `,
-    [String(y), m, y, m]
+    binds
   );
-  return rows.map((r) => ({ region: r.REGION, target: r.TARGET || 0, achievement: r.ACHIEVEMENT || 0 }));
+  return rows;
+}
+
+export async function getRegionTargetVsAchievement({ years, months } = {}) {
+  const period = await resolvePeriod(years, months);
+  if (!period) return [];
+  const { years: y, mtdMonths, fytdMonths } = period;
+  const cutoffNo = Math.max(...fytdMonths.map((m) => FISCAL_MONTH_NO[m]));
+
+  const [mtdTargets, fytdTargets, achievementRows] = await Promise.all([
+    targetsByRegion(toCalendarPairs(y, mtdMonths)),
+    targetsByRegion(toCalendarPairs(y, fytdMonths)),
+    query(
+      `SELECT REGION,
+              SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN NET_SALES END) AS ACHIEVEMENT_MTD,
+              SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN NET_SALES END) AS ACHIEVEMENT_FYTD
+       FROM ${SEC}
+       WHERE ${STANDING_FILTER}
+       GROUP BY REGION`,
+      [...y, ...mtdMonths, ...y, cutoffNo]
+    ),
+  ]);
+
+  const mtdMap = new Map(mtdTargets.map((r) => [r.REGION, r.TARGET || 0]));
+  const fytdMap = new Map(fytdTargets.map((r) => [r.REGION, r.TARGET || 0]));
+  const regions = new Set([...mtdMap.keys(), ...fytdMap.keys(), ...achievementRows.map((r) => r.REGION)]);
+
+  const achMap = new Map(achievementRows.map((r) => [r.REGION, r]));
+  return [...regions]
+    .map((region) => {
+      const a = achMap.get(region);
+      return {
+        region,
+        mtd: { target: mtdMap.get(region) || 0, achievement: a?.ACHIEVEMENT_MTD || 0 },
+        ytd: { target: fytdMap.get(region) || 0, achievement: a?.ACHIEVEMENT_FYTD || 0 },
+      };
+    })
+    .sort((a, b) => b.mtd.achievement - a.mtd.achievement);
 }
 
 // ── Month-over-Month Sales by fiscal year, local widget filters independent

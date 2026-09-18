@@ -23,7 +23,7 @@ export const secondaryApi = {
   category: ({ filters, level }) => get("category", { filters, level }),
   brand: ({ filters, level }) => get("brand", { filters, level }),
   region: ({ filters, level }) => get("region", { filters, level }),
-  regionTarget: ({ year, month }) => get("region-target", { year, month }),
+  regionTarget: (filters) => get("region-target", { filters }),
   // Region intentionally not passed — disabled on both Primary and
   // Secondary's MoM per the DE (2026-09-16): region data has issues pending
   // a proper mapping. See shared/secondaryQueries.js's getMonthOverMonth.

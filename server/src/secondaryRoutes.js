@@ -62,12 +62,10 @@ router.get(
 
 router.get(
   "/region-target",
-  wrap((req) =>
-    getRegionTargetVsAchievement({
-      year: req.query.year ? Number(req.query.year) : undefined,
-      month: req.query.month || undefined,
-    })
-  )
+  wrap((req) => {
+    const filters = parseFilters(req);
+    return getRegionTargetVsAchievement({ years: filters.year, months: filters.month });
+  })
 );
 
 router.get(

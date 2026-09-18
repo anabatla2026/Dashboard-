@@ -46,12 +46,11 @@ export default async function handler(req, res) {
       case "region":
         data = await getRegionAchievement({ filters: parseFilters(req.query), level: req.query.level || "region" });
         break;
-      case "region-target":
-        data = await getRegionTargetVsAchievement({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          month: req.query.month || undefined,
-        });
+      case "region-target": {
+        const filters = parseFilters(req.query);
+        data = await getRegionTargetVsAchievement({ years: filters.year, months: filters.month });
         break;
+      }
       case "mom":
         data = await getMonthOverMonth({
           fiscalYearStart: req.query.fiscalYearStart,

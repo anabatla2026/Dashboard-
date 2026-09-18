@@ -9,7 +9,15 @@ export const DIMS = [
   { key: "year",    label: "Year" },
   { key: "month",   label: "Month" },
   { key: "region",  label: "Region" },
-  { key: "segment", label: "Segment" },
+  // segment: disabled 2026-09-18 — the DE's 2026-09-17 filter rules
+  // (region/category/brand/channel type/town/distributor) never covered
+  // Segment, so unlike those it still runs on the old, unvalidated raw
+  // CHANNEL_GROUP column and has the documented Primary/Secondary taxonomy
+  // collision (dashboard-query-reference.md §1: Primary's "segment" is
+  // Customer Group2, Secondary's is GT/MT/KA — unrelated fields that
+  // happen to share a name). Re-add once the DE gives it the same
+  // dropdown/backend mapping treatment as the other dims.
+  // { key: "segment", label: "Segment" },
   { key: "cat",     label: "Category" },
   { key: "brand",   label: "Brand" },
   { key: "chType",  label: "Channel type" },
