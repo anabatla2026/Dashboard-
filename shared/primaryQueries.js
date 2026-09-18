@@ -4,6 +4,10 @@ const PRI = `${SNOWFLAKE_DATABASE}.GOLD.ZFI_SCO_VW`;
 const DIST_FILTER = `${SNOWFLAKE_DATABASE}.GOLD.VW_DISTRIBUTOR_FILTER_1ST_DASH`;
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// Only for ordering the Month dropdown to match the fiscal year (Jul-Jun)
+// everything else on this dashboard uses — MONTH_SHORT itself must stay
+// calendar-order since it's indexed by Date.getMonth() (0 = Jan) elsewhere.
+const FISCAL_MONTH_ORDER = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun"];
 const FISCAL_MONTH_NO = { Jul: 1, Aug: 2, Sep: 3, Oct: 4, Nov: 5, Dec: 6, Jan: 7, Feb: 8, Mar: 9, Apr: 10, May: 11, Jun: 12 };
 
 // Row validity applied everywhere below. This used to also exclude
@@ -137,6 +141,21 @@ function inList(values) {
   return values.map(() => "?").join(", ");
 }
 
+// The DE's trend/category/brand queries (not just the KPI cards) default to
+// the current MTD period when no Year/Month filter is active — confirmed
+// 2026-09-18: their trend query with all filters NULL returned only 14 rows
+// (Sep 1-15, the current month to date), while this dashboard's equivalent
+// showed the entire unscoped history. Reuses resolvePeriod's MTD
+// resolution (not FYTD) to inject the same effective year/month back into
+// `filters` before buildWhere runs, so an explicit Year/Month selection
+// still overrides it exactly as before — this only fills in the default
+// when the user hasn't chosen one.
+async function withDefaultPeriod(filters = {}) {
+  const period = await resolvePeriod(filters.year, filters.month);
+  if (!period) return filters;
+  return { ...filters, year: period.years, month: period.mtdMonths };
+}
+
 // ── KPI cards: Sales Value, Volume Ctn/Pcs, MTD/FYTD + GOLY, now scoped by
 // every global filter (Region/Category/Brand/Distributor) the same way the
 // DE's own KPI query is — previously KPI cards deliberately ignored
@@ -199,16 +218,25 @@ export async function getPrimaryKpis({ years, months, filters = {} } = {}) {
   };
 }
 
-// ── Daily net sales trend ───────────────────────────────────────────────────
-export async function getPrimaryTrend(filters = {}) {
-  const resolvedFilters = await withResolvedDist(filters);
+// ── Net sales trend, bucketed by day/week/month. Week/month exist for when
+// the selected period spans several months at once (a daily series across
+// e.g. 3 months is 90+ points) — DATE_TRUNC collapses each row's
+// Posting_Date to its bucket start, which doubles as that bucket's label. ─
+const TREND_DATE_EXPR = {
+  day: "Posting_Date",
+  week: "DATE_TRUNC('week', Posting_Date)",
+  month: "DATE_TRUNC('month', Posting_Date)",
+};
+export async function getPrimaryTrend(filters = {}, granularity = "day") {
+  const resolvedFilters = await withResolvedDist(await withDefaultPeriod(filters));
   const { clause, binds } = buildWhere(resolvedFilters);
+  const dateExpr = TREND_DATE_EXPR[granularity] || TREND_DATE_EXPR.day;
   const rows = await query(
-    `SELECT TO_VARCHAR(Posting_Date, 'YYYY-MM-DD') AS DATE, SUM(Total_Value) AS NET_SALES
+    `SELECT TO_VARCHAR(${dateExpr}, 'YYYY-MM-DD') AS DATE, SUM(Total_Value) AS NET_SALES
      FROM ${PRI}
      WHERE ${VALIDITY} ${clause}
-     GROUP BY Posting_Date
-     ORDER BY Posting_Date`,
+     GROUP BY ${dateExpr}
+     ORDER BY ${dateExpr}`,
     binds
   );
   return rows.map((r) => ({ date: r.DATE, netSales: r.NET_SALES || 0 }));
@@ -229,7 +257,7 @@ export async function getPrimaryByBrand({ filters = {}, level = "brand" } = {}) 
 }
 
 async function groupByOne(col, filters) {
-  const resolvedFilters = await withResolvedDist(filters);
+  const resolvedFilters = await withResolvedDist(await withDefaultPeriod(filters));
   const { clause, binds } = buildWhere(resolvedFilters);
   const rows = await query(
     `SELECT ${col} AS LABEL, SUM(Total_Value) AS NET_SALES
@@ -277,7 +305,7 @@ export async function getPrimaryDims() {
     );
     result[key] = rows.map((r) => r.V);
   }
-  result.month.sort((a, b) => MONTH_SHORT.indexOf(a) - MONTH_SHORT.indexOf(b));
+  result.month.sort((a, b) => FISCAL_MONTH_ORDER.indexOf(a) - FISCAL_MONTH_ORDER.indexOf(b));
   return result;
 }
 

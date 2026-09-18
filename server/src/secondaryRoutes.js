@@ -36,7 +36,7 @@ router.get(
   })
 );
 
-router.get("/trend", wrap((req) => getSecondaryTrend(parseFilters(req))));
+router.get("/trend", wrap((req) => getSecondaryTrend(parseFilters(req), req.query.granularity || "day")));
 
 router.get(
   "/channel-type",

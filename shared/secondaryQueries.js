@@ -5,6 +5,10 @@ const TARGETS = `${SNOWFLAKE_DATABASE}.GOLD.TARGETS_VW`;
 const DIST_MASTER = `${SNOWFLAKE_DATABASE}.GOLD.DISTRIBUTOR_MASTER_VW`;
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// Only for ordering the Month dropdown to match the fiscal year (Jul-Jun)
+// everything else on this dashboard uses — MONTH_SHORT itself must stay
+// calendar-order since it's indexed by Date.getMonth() (0 = Jan) elsewhere.
+const FISCAL_MONTH_ORDER = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun"];
 const FISCAL_MONTH_NO = { Jul: 1, Aug: 2, Sep: 3, Oct: 4, Nov: 5, Dec: 6, Jan: 7, Feb: 8, Mar: 9, Apr: 10, May: 11, Jun: 12 };
 
 // The business labels a fiscal year (1 July - 30 June) by the calendar year
@@ -20,6 +24,19 @@ const FISCAL_MONTH_NO_EXPR = `(CASE MONTH
   WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
   WHEN 'Nov' THEN 5 WHEN 'Dec' THEN 6 WHEN 'Jan' THEN 7 WHEN 'Feb' THEN 8
   WHEN 'Mar' THEN 9 WHEN 'Apr' THEN 10 WHEN 'May' THEN 11 WHEN 'Jun' THEN 12 END)`;
+
+// Standing filter the DE's own query hardcodes, unconditionally, on every
+// Secondary query — "APP_USER_TAGGED_TITLE <> 'SD'" — confirmed 2026-09-18
+// by running the DE's reference query directly: FYTD_SALES_VALUE only
+// matched this dashboard's output once this exclusion was applied (SD-
+// tagged rows have real activity in Jul/Aug, none in Sep specifically,
+// which is why MTD happened to match without it while FYTD didn't).
+// Unlike the appUser dimension's *default* checkbox state (client-side,
+// user-togglable — see FilterContext.jsx's APP_USER_DEFAULT_EXCLUDE, which
+// also soft-defaults to hiding the separate 'SD - OB' tag), this is
+// unconditional and not affected by whatever the user's own App User Tag
+// filter selection is.
+const STANDING_FILTER = "APP_USER_TAGGED_TITLE <> 'SD'";
 
 // Dashboard filter key -> fact-table column(s) to match (OR'd when more than
 // one). Per the DE's filter rules (2026-09-17):
@@ -89,7 +106,9 @@ function inList(values) {
 }
 
 async function currentFiscal() {
-  const rows = await query(`SELECT TO_VARCHAR(MAX(DATE), 'YYYY-MM-DD') AS MAXD FROM ${SEC} WHERE DATE IS NOT NULL`);
+  const rows = await query(
+    `SELECT TO_VARCHAR(MAX(DATE), 'YYYY-MM-DD') AS MAXD FROM ${SEC} WHERE DATE IS NOT NULL AND ${STANDING_FILTER}`
+  );
   const maxd = rows[0]?.MAXD;
   if (!maxd) return null;
   const d = new Date(`${maxd}T00:00:00`);
@@ -118,6 +137,20 @@ async function resolvePeriod(years, months) {
   const fytdMonths = hasMonths ? months : hasYears ? ["Jun"] : cur ? [cur.month] : [];
   if (effYears.length === 0 || mtdMonths.length === 0) return null;
   return { years: effYears, mtdMonths, fytdMonths };
+}
+
+// The DE's trend/category/brand/channel-type queries (not just the KPI
+// cards) default to the current MTD period when no Year/Month filter is
+// active — confirmed 2026-09-18 against Primary's equivalent trend query
+// (same default-period CTE shape on both sides). Reuses resolvePeriod's MTD
+// resolution (not FYTD) to inject the same effective year/month back into
+// `filters` before buildWhere runs, so an explicit Year/Month selection
+// still overrides it exactly as before — this only fills in the default
+// when the user hasn't chosen one.
+async function withDefaultPeriod(filters = {}) {
+  const period = await resolvePeriod(filters.year, filters.month);
+  if (!period) return filters;
+  return { ...filters, year: period.years, month: period.mtdMonths };
 }
 
 // ── KPI cards (Sales Value, Volume Ctn/Pcs, Productive Stores/Distributors,
@@ -152,7 +185,7 @@ export async function getSecondaryKpis({ years, months, filters = {} } = {}) {
 
       COUNT(DISTINCT TRIM(OUTLET_CODE)) AS TOTAL_STORES
     FROM ${SEC}
-    WHERE DATE IS NOT NULL
+    WHERE DATE IS NOT NULL AND ${STANDING_FILTER}
     ${clause}
   `;
   const binds = [
@@ -199,15 +232,27 @@ export async function getSecondaryKpis({ years, months, filters = {} } = {}) {
   };
 }
 
-// ── Daily net sales trend (§3.1) ────────────────────────────────────────────
-export async function getSecondaryTrend(filters = {}) {
-  const { clause, binds } = buildWhere(withResolvedDist(filters));
+// ── Net sales trend, bucketed by day/week/month (§3.1) — see Primary's
+// getPrimaryTrend for why week/month exist (a daily series across several
+// selected months is a lot of points). ─────────────────────────────────────
+// DATE_TRUNC needs an explicit TO_DATE() cast here — unlike Primary's
+// Posting_Date, this view's DATE column isn't consistently typed as a
+// native DATE (DATE_TRUNC('week', DATE) alone errors: "does not support
+// VARCHAR argument type").
+const TREND_DATE_EXPR = {
+  day: "DATE",
+  week: "DATE_TRUNC('week', TO_DATE(DATE))",
+  month: "DATE_TRUNC('month', TO_DATE(DATE))",
+};
+export async function getSecondaryTrend(filters = {}, granularity = "day") {
+  const { clause, binds } = buildWhere(withResolvedDist(await withDefaultPeriod(filters)));
+  const dateExpr = TREND_DATE_EXPR[granularity] || TREND_DATE_EXPR.day;
   const rows = await query(
-    `SELECT TO_VARCHAR(DATE, 'YYYY-MM-DD') AS DATE, SUM(NET_SALES) AS NET_SALES
+    `SELECT TO_VARCHAR(${dateExpr}, 'YYYY-MM-DD') AS DATE, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
-     WHERE DATE IS NOT NULL ${clause}
-     GROUP BY DATE
-     ORDER BY DATE`,
+     WHERE DATE IS NOT NULL AND ${STANDING_FILTER} ${clause}
+     GROUP BY ${dateExpr}
+     ORDER BY ${dateExpr}`,
     binds
   );
   return rows.map((r) => ({ date: r.DATE, netSales: r.NET_SALES || 0 }));
@@ -216,7 +261,7 @@ export async function getSecondaryTrend(filters = {}) {
 // ── Generic "group by one column, scoped by the active global filters"
 // query shared by every drillable chart. ────────────────────────────────────
 async function groupByOne(col, filters, extra = {}) {
-  const { clause, binds } = buildWhere(withResolvedDist(filters));
+  const { clause, binds } = buildWhere(withResolvedDist(await withDefaultPeriod(filters)));
   const extraClauses = [];
   const extraBinds = [];
   for (const [c, v] of Object.entries(extra)) {
@@ -228,7 +273,7 @@ async function groupByOne(col, filters, extra = {}) {
   const rows = await query(
     `SELECT ${col} AS LABEL, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
-     WHERE DATE IS NOT NULL ${clause} ${extraClause}
+     WHERE DATE IS NOT NULL AND ${STANDING_FILTER} ${clause} ${extraClause}
      GROUP BY ${col}
      ORDER BY NET_SALES DESC`,
     [...binds, ...extraBinds]
@@ -289,7 +334,7 @@ export async function getRegionTargetVsAchievement({ year, month } = {}) {
     achievement_by_region AS (
       SELECT REGION, SUM(NET_SALES) AS ACHIEVEMENT
       FROM ${SEC}
-      WHERE ${FISCAL_YEAR_EXPR} = ? AND MONTH = ?
+      WHERE ${FISCAL_YEAR_EXPR} = ? AND MONTH = ? AND ${STANDING_FILTER}
       GROUP BY REGION
     )
     SELECT COALESCE(t.REGION, a.REGION) AS REGION,
@@ -316,7 +361,7 @@ export async function getMonthOverMonth({ fiscalYearStart, filters = {} } = {}) 
   const rows = await query(
     `SELECT MONTH, YEAR, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
-     WHERE DATE >= ? AND DATE < ? ${clause}
+     WHERE DATE >= ? AND DATE < ? AND ${STANDING_FILTER} ${clause}
      GROUP BY MONTH, YEAR
      ORDER BY CASE MONTH
        WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
@@ -339,7 +384,7 @@ export async function getSecondaryDims() {
     const rows = await query(`SELECT DISTINCT ${col} AS V FROM ${SEC} WHERE ${col} IS NOT NULL ORDER BY ${col}`);
     result[key] = rows.map((r) => r.V);
   }
-  result.month.sort((a, b) => MONTH_SHORT.indexOf(a) - MONTH_SHORT.indexOf(b));
+  result.month.sort((a, b) => FISCAL_MONTH_ORDER.indexOf(a) - FISCAL_MONTH_ORDER.indexOf(b));
   return result;
 }
 

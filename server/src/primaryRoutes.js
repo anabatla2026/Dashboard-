@@ -33,7 +33,7 @@ router.get(
   })
 );
 
-router.get("/trend", wrap((req) => getPrimaryTrend(parseFilters(req))));
+router.get("/trend", wrap((req) => getPrimaryTrend(parseFilters(req), req.query.granularity || "day")));
 
 router.get(
   "/category",

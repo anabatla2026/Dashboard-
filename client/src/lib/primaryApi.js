@@ -14,7 +14,7 @@ async function get(path, params = {}) {
 
 export const primaryApi = {
   kpis: (filters) => get("kpis", { filters }),
-  trend: (filters) => get("trend", { filters }),
+  trend: (filters, granularity) => get("trend", { filters, granularity }),
   category: ({ filters, level }) => get("category", { filters, level }),
   brand: ({ filters, level }) => get("brand", { filters, level }),
   mom: ({ fiscalYearStart, filters }) => get("mom", { fiscalYearStart, filters }),

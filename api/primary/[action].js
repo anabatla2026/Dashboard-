@@ -26,7 +26,7 @@ export default async function handler(req, res) {
         break;
       }
       case "trend":
-        data = await getPrimaryTrend(parseFilters(req.query));
+        data = await getPrimaryTrend(parseFilters(req.query), req.query.granularity || "day");
         break;
       case "category":
         data = await getPrimaryByCategory({ filters: parseFilters(req.query), level: req.query.level || "cat" });

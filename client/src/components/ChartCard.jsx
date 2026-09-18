@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { aggregateTop, aggregateDualTop, topNWithOther, mergeDualTop } from "../lib/aggregate";
 import { useDrill } from "../hooks/useDrill";
 import { useDrillPath } from "../hooks/useDrillPath";
@@ -82,8 +82,15 @@ export default function ChartCard({
 }) {
   const { filters } = useFilters();
   const isDual = DUAL_TYPES.has(type);
-  const { trend: secondaryTrend } = useSecondaryTrend(filters, type === "dual-trend");
-  const { trend: primaryTrend } = usePrimaryTrend(filters, type === "dual-trend");
+  const isTrendDual = type === "dual-trend";
+  // Daily is fine for one month; once several months are selected a daily
+  // series is a lot of points, so the trend chart offers week/month
+  // bucketing instead — see shared/primaryQueries.js's TREND_DATE_EXPR.
+  const isMultiMonth = (filters.month?.size || 0) > 1;
+  const [granularity, setGranularity] = useState("day");
+  const effectiveGranularity = isMultiMonth ? granularity : "day";
+  const { trend: secondaryTrend } = useSecondaryTrend(filters, isTrendDual, effectiveGranularity);
+  const { trend: primaryTrend } = usePrimaryTrend(filters, isTrendDual, effectiveGranularity);
   const distinctDates = useMemo(() => (type === "trend" ? new Set(rows.map((r) => r.date)).size : 0), [rows, type]);
   const useFallback = type === "trend" && distinctDates <= 1 && fallbackDim;
   const effectiveType = useFallback ? "bar-h" : type;
@@ -203,6 +210,19 @@ export default function ChartCard({
           )}
         </div>
         <div className="widget-controls">
+          {isTrendDual && isMultiMonth && (
+            <select
+              className="fy-select"
+              value={granularity}
+              onChange={(e) => setGranularity(e.target.value)}
+              aria-label="Trend data points"
+              title="Group the trend by day, week, or month"
+            >
+              <option value="day">Daily</option>
+              <option value="week">Weekly</option>
+              <option value="month">Monthly</option>
+            </select>
+          )}
           {chipDrill?.hasActive && (
             <button type="button" className="drill-chip" onClick={chipDrill.clear} title="Clear this drill-down">
               {chipDrill.activeValue ? truncate(String(chipDrill.activeValue), 16) : "Filtered"}
@@ -265,7 +285,13 @@ export default function ChartCard({
           />
         )}
         {effectiveType === "dual-trend" && (
-          <DualTrendChart secondaryTrend={secondaryTrend} primaryTrend={primaryTrend} hueVarA={SERIES_HUE_SECONDARY} hueVarB={SERIES_HUE_PRIMARY} />
+          <DualTrendChart
+            secondaryTrend={secondaryTrend}
+            primaryTrend={primaryTrend}
+            hueVarA={SERIES_HUE_SECONDARY}
+            hueVarB={SERIES_HUE_PRIMARY}
+            granularity={effectiveGranularity}
+          />
         )}
         {effectiveType === "pareto-line" && (
           <ParetoChart rows={rows} dim={effectiveDim} hueVar={hueVar} mode="line" onDrill={simpleDrill.onDrill} isActive={simpleDrill.isActive} />

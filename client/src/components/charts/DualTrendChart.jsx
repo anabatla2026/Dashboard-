@@ -19,7 +19,15 @@ function toDateMap(trend) {
   return new Map((trend || []).map((r) => [r.date, r.netSales || 0]));
 }
 
-export default function DualTrendChart({ secondaryTrend, primaryTrend, hueVarA, hueVarB, labelA = "Secondary", labelB = "Primary" }) {
+export default function DualTrendChart({
+  secondaryTrend,
+  primaryTrend,
+  hueVarA,
+  hueVarB,
+  labelA = "Secondary",
+  labelB = "Primary",
+  granularity = "day",
+}) {
   const { show, hide } = useTooltip();
   const [hoverIdx, setHoverIdx] = useState(null);
 
@@ -46,7 +54,7 @@ export default function DualTrendChart({ secondaryTrend, primaryTrend, hueVarA, 
     return (
       <div className="trend-single">
         <div className="trend-single-value">{compact(secSeries[0] || priSeries[0])}</div>
-        <div className="trend-single-label">Net sales on {formatDateLabel(dates[0])}</div>
+        <div className="trend-single-label">Net sales on {formatDateLabel(dates[0], granularity)}</div>
         <div className="trend-single-note">This widens into a full trend once more dated exports are added.</div>
       </div>
     );
@@ -129,7 +137,7 @@ export default function DualTrendChart({ secondaryTrend, primaryTrend, hueVarA, 
             setHoverIdx(i);
             show(e, {
               color: cssVar(hueVarA),
-              label: formatDateLabel(d),
+              label: formatDateLabel(d, granularity),
               value: `${labelA}: ${moneyFull(secSeries[i])}`,
               extra: `${labelB}: ${moneyFull(priSeries[i])}`,
             });
@@ -162,7 +170,7 @@ export default function DualTrendChart({ secondaryTrend, primaryTrend, hueVarA, 
           <rect x={MARGIN_L + band * i} y={MARGIN_T} width={band} height={PLOT_H} fill="transparent" />
           {i % labelStep === 0 && (
             <text x={secPts[i].x} y={MARGIN_T + PLOT_H + 20} className={"axis-label" + (i === hoverIdx ? " active" : "")} textAnchor="middle">
-              {formatDateLabel(d)}
+              {formatDateLabel(d, granularity)}
             </text>
           )}
         </g>

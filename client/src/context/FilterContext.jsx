@@ -6,13 +6,13 @@ const FilterContext = createContext(null);
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// The "SD" app-user tag (2026-08-31 requirement): its secondary sales rows
-// overstate real sales, so it's excluded by default everywhere. The single-
-// month Excel export only ever contained "SD - OB"; the full Snowflake
-// history (back to 2022) also carries a bare "SD" value (~72k rows) that
-// this same rule should cover. Kept out of emptyFilters()'s blank slate —
-// see resetAll.
-const APP_USER_DEFAULT_EXCLUDE = new Set(["SD - OB", "SD"]);
+// The "SD" app-user tag: its secondary sales rows overstate real sales, so
+// it's excluded by default. Per the DE's rule (confirmed 2026-09-18,
+// matching the mandatory server-side STANDING_FILTER in
+// shared/secondaryQueries.js) only the bare "SD" value is excluded — "SD -
+// OB", "MDSD", and "OB" are all real tags that stay checked/included by
+// default. Kept out of emptyFilters()'s blank slate — see resetAll.
+const APP_USER_DEFAULT_EXCLUDE = new Set(["SD"]);
 
 export function FilterProvider({ children }) {
   const { secondaryDims, secondaryMeta } = useData();

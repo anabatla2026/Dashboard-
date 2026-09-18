@@ -28,7 +28,7 @@ export default async function handler(req, res) {
         break;
       }
       case "trend":
-        data = await getSecondaryTrend(parseFilters(req.query));
+        data = await getSecondaryTrend(parseFilters(req.query), req.query.granularity || "day");
         break;
       case "channel-type":
         data = await getByChannelType({
