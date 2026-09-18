@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { compact, formatDateLabel, moneyFull, niceMax } from "../../lib/format";
 import { useTooltip } from "../../context/TooltipContext";
 
@@ -45,6 +45,16 @@ export default function DualTrendChart({
       priSeries: dates.map((d) => priMap.get(d) || 0),
     };
   }, [secondaryTrend, primaryTrend]);
+
+  // `hoverIdx` indexes into `dates`/`secPts` — if it's left pointing at a
+  // hovered point and the data then changes shape (e.g. switching the
+  // trend granularity from daily to monthly shrinks dozens of points down
+  // to 2-3), the old index can point past the end of the new, shorter
+  // array and crash the render below. Reset it whenever the data changes
+  // instead of only on pointer-leave.
+  useEffect(() => {
+    setHoverIdx(null);
+  }, [dates]);
 
   if (dates.length === 0) {
     return <div className="chart-empty">No data for current filters</div>;
@@ -126,7 +136,9 @@ export default function DualTrendChart({
         strokeLinejoin="round"
         strokeDasharray="5 4"
       />
-      {hoverIdx !== null && <line x1={secPts[hoverIdx].x} x2={secPts[hoverIdx].x} y1={MARGIN_T} y2={MARGIN_T + PLOT_H} className="crosshair" />}
+      {hoverIdx !== null && secPts[hoverIdx] && (
+        <line x1={secPts[hoverIdx].x} x2={secPts[hoverIdx].x} y1={MARGIN_T} y2={MARGIN_T + PLOT_H} className="crosshair" />
+      )}
 
       {dates.map((d, i) => (
         <g
