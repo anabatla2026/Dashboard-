@@ -5,16 +5,11 @@ import { fetchFilterOptions } from "../lib/filterOptionsApi";
 
 const DataContext = createContext(null);
 
-// Both Primary (GOLD.ZFI_SCO_VW) and Secondary (GOLD.SALESFLO_DATADUMP_VW)
-// now live in Snowflake — too large to ship as raw rows the way the
-// original single-month Excel exports allowed. Every widget fetches its own
-// pre-aggregated slice from /api/primary/* or /api/secondary/* instead (see
-// hooks/useServerAggregate.js etc.); this context only carries the small
-// dimension-option lists and summary totals for each, plus `refreshKey` —
-// each widget's own fetch keys off it so the header's Refresh button still
-// forces every chart to re-query instead of just refreshing this context's
-// own dims/meta (Snowflake has no in-memory cache to invalidate the way the
-// old Excel file-watcher did; a real re-query is the only way to "refresh").
+// Every widget fetches its own pre-aggregated slice from /api/primary/* or
+// /api/secondary/* (see hooks/useServerAggregate.js etc.); this context only
+// carries the small dimension-option lists and summary totals, plus
+// `refreshKey` — each widget's own fetch keys off it so the header's
+// Refresh button forces every chart to re-query.
 export function DataProvider({ children }) {
   const [primaryMeta, setPrimaryMeta] = useState(null);
   const [primaryDims, setPrimaryDims] = useState(null);

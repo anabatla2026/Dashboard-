@@ -5,8 +5,7 @@ import { useData } from "../context/DataContext";
 import { useServerQuery } from "./useServerQuery";
 
 // Region is intentionally not passed to either source — disabled on both
-// Primary and Secondary's MoM per the DE (2026-09-16): region data has
-// issues pending a proper mapping.
+// Primary and Secondary's MoM pending a proper region mapping.
 export function useSecondaryMonthOverMonth({ fiscalYearStart, filters }) {
   const { refreshKey } = useData();
   const filtersParam = filtersToParam(filters);

@@ -4,9 +4,9 @@ import { ChevronIcon } from "./Icons";
 // `options` accepts either plain strings (year/month/segment/appUser — value
 // and display label are the same) or { value, label } pairs (Region,
 // Category, Distributor — where the dropdown shows a friendly name but the
-// filter tracks/transmits the DE's mapping-table code, per the 2026-09-17
-// filter rules). Normalized to { value, label } here so the rest of the
-// component doesn't need to care which shape it got.
+// filter tracks/transmits a mapping-table code). Normalized to { value,
+// label } here so the rest of the component doesn't need to care which
+// shape it got.
 function normalize(opt) {
   return opt && typeof opt === "object" ? opt : { value: opt, label: opt };
 }

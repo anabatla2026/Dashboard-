@@ -10,16 +10,30 @@ once by triggering fresh queries, not by re-filtering an in-memory dataset.
 ## Structure
 
 ```
-server/   Express API for local dev — mounts the Primary/Secondary routes
-client/   React (Vite) dashboard
-shared/   Snowflake connection + all query logic, used by both server/
-          (local) and api/ (Vercel)
-api/      Vercel serverless functions mirroring server/'s routes — same
-          query logic, no persistent process
+api/        Backend — deploys to Vercel as serverless functions
+  primary/[action].js    Primary endpoints (/api/primary/kpis, /trend, ...)
+  secondary/[action].js  Secondary endpoints (/api/secondary/kpis, ...)
+  filter-options.js      /api/filter-options
+  health.js               /api/health
+  _lib/                   Snowflake connection + all query logic (KPIs,
+                          trend, category/brand breakdowns, month-over-
+                          month, region achievement/target). Underscore
+                          prefix keeps Vercel from treating these as their
+                          own endpoints. Used by both api/ (Vercel) and
+                          server/ (local dev) below.
+    snowflakeClient.js    Connection + query() helper
+    httpParams.js         Query-string parsing shared by both deploy targets
+    filterOptions.js      Global filter-bar dropdown options
+    primaryQueries.js     Every Primary (SAP) aggregation query
+    secondaryQueries.js   Every Secondary (SalesFlo) aggregation query
+server/     Express wrapper for local dev — mounts the same routes as api/,
+            against the same api/_lib query functions, over a persistent
+            process instead of one-off Lambdas
+client/     React (Vite) dashboard + its API integration (client/src/lib)
 ```
 
-`shared/snowflakeClient.js` holds the connection; `shared/primaryQueries.js`
-and `shared/secondaryQueries.js` hold every aggregation query (KPIs, trend,
+`api/_lib/snowflakeClient.js` holds the connection; `api/_lib/primaryQueries.js`
+and `api/_lib/secondaryQueries.js` hold every aggregation query (KPIs, trend,
 category/brand breakdowns, month-over-month, region achievement/target).
 Both are queried straight from `GOLD.ZFI_SCO_VW` (Primary) and
 `GOLD.SALESFLO_DATADUMP_VW` (Secondary) — no data is cached or shipped as
@@ -73,7 +87,7 @@ selected there is sent as query parameters to every widget's Snowflake
 query — Region/Segment/Channel type/Distributor/App User Tag only apply to
 Secondary (Primary has no equivalent columns; see
 `client/src/context/FilterContext.jsx`'s handling and
-`shared/primaryQueries.js`'s `COLUMN_EXPR`). Clicking a bar to drill down
+`api/_lib/primaryQueries.js`'s `COLUMN_EXPR`). Clicking a bar to drill down
 (e.g. Category → Brand → SKU) re-queries scoped to that value instead of
 re-filtering already-fetched rows.
 

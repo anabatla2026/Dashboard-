@@ -6,18 +6,11 @@ import { formatPeriod } from "../lib/period";
 import { WalletIcon, BoxIcon } from "./Icons";
 import WidgetInfo from "./WidgetInfo";
 
-// Per MOM 2026-09-02 §1: KPI cards split into YTD/MTD × Primary/Secondary,
-// each showing Sales Value (PKR) and Volume (Carton/Pcs) — Secondary also
-// shows Total/Productive store & distributor counts (Primary's source query
-// doesn't define an equivalent). Built as 4 compact stat-cards rather than
-// ~24 separate tiles, per the same doc's own review note capping a
-// dashboard at 6–9 visuals.
-//
-// Both sources are Snowflake-backed now (see useSecondaryKpis/usePrimaryKpis)
-// — the server resolves the period and computes every MTD/YTD/GOLY figure
-// directly, since neither table can be shipped whole to the browser for
-// client-side aggregation the way the original single-month Excel exports
-// were.
+// KPI cards split into YTD/MTD x Primary/Secondary, each showing Sales
+// Value (PKR) and Volume (Carton/Pcs) — Secondary also shows Total/
+// Productive store & distributor counts (Primary has no equivalent). The
+// server resolves the period and computes every MTD/YTD/GOLY figure
+// directly (see useSecondaryKpis/usePrimaryKpis).
 
 function GolyBadge({ pct }) {
   if (pct === undefined) return null;

@@ -7,20 +7,13 @@ import { filtersToParam } from "../lib/filtersToParam";
 import DualBarChart from "./charts/DualBarChart";
 import WidgetInfo from "./WidgetInfo";
 
-// Region-wise Target vs Achievement — previously blocked (see
-// dashboard-query-reference.md §4): Target data's region names and Sales
-// data's region names were two disjoint taxonomies with no overlap. Fixed
-// 2026-09-15 when the data team remapped GOLD.salesflo_datadump_vw's REGION
-// column onto DISTRIBUTOR_MASTER_VW's NEW_REGION taxonomy. Kept as its own
-// small component rather than folded into ChartCard's generic drill
-// machinery: Target only exists at region granularity (no town/distributor
-// breakdown), so this widget is intentionally not drillable.
-//
-// Matches the DE's "SECONDARY KPI #7" reference query (2026-09-18): only
-// Year/Month apply here (no region/category/etc — Target only exists at
-// distributor->region granularity), each independently multi-select, and
-// both MTD and FYTD are computed server-side — this just toggles which one
-// is displayed, same pattern as Month-over-Month's fiscal-year select.
+// Region-wise Target vs Achievement. Kept as its own small component rather
+// than folded into ChartCard's generic drill machinery: Target only exists
+// at region granularity (no town/distributor breakdown), so this widget is
+// intentionally not drillable. Only Year/Month apply here (each
+// independently multi-select); both MTD and FYTD are computed server-side —
+// this just toggles which one is displayed, same pattern as
+// Month-over-Month's fiscal-year select.
 export default function RegionTargetChart({ filters, className = "" }) {
   const { refreshKey } = useData();
   const [mode, setMode] = useState("mtd");

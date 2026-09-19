@@ -9,20 +9,10 @@ import RegionTargetChart from "./components/RegionTargetChart";
 import MonthOverMonthTable from "./components/MonthOverMonthTable";
 import Skeleton from "./components/Skeleton";
 
-// ── Chart section definitions ─────────────────────────────────────────────────
-// Kept to the approved design (Dashboard 1 Design & Acceptance Sign-off,
-// TNX.DWH.AnaBatla.SO.01 §3.3) and capped at a handful of widgets total —
-// see the doc for what was deliberately dropped (SKU breakdown, distributor/
-// town concentration, Business Unit mix, and the extra channel/segment/
-// order-source/area-type/region charts this build previously carried beyond
-// what was actually signed off).
-// Both Primary (GOLD.ZFI_SCO_VW) and Secondary (GOLD.SALESFLO_DATADUMP_VW)
-// are Snowflake-backed now — neither table can be shipped whole to the
-// browser the way the original single-month Excel exports were, so every
-// chart below is `useServerAgg: true` and fetches its own pre-aggregated
-// GROUP BY from the server (see ChartCard.jsx / hooks/useServerAggregate.js),
-// including both sides of the dual (Primary vs Secondary) charts.
-
+// Chart section definitions. Every chart is `useServerAgg: true` and fetches
+// its own pre-aggregated GROUP BY from the server (see ChartCard.jsx /
+// hooks/useServerAggregate.js), including both sides of the dual
+// (Primary vs Secondary) charts.
 const CHART_SECTIONS = [
   {
     id:    "trend-section",
@@ -42,7 +32,6 @@ const CHART_SECTIONS = [
       },
       {
         id: "ch",
-        // Renamed per MOM 2026-09-02 §3 (was "Channel type mix").
         title: "Secondary Sales Value by Channel Type",
         type: "bar-h",
         dim: "chType",
@@ -141,12 +130,10 @@ function Dashboard() {
 
   return (
     <div className="container">
-      {/* ── KPI Overview ── */}
       <section className="section">
         <KpiStrip filters={filters} />
       </section>
 
-      {/* ── Chart Sections ── */}
       {CHART_SECTIONS.map((section) => (
         <SectionBlock
           key={section.id}
@@ -159,7 +146,6 @@ function Dashboard() {
         />
       ))}
 
-      {/* ── Month-over-Month Sales (replaces Distributor Performance, MOM 2026-09-02 §6) ── */}
       <section className="section">
         <MonthOverMonthTable
           filters={filters}

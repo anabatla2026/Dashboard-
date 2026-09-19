@@ -3,10 +3,8 @@ import { useData } from "../context/DataContext";
 import { useServerQuery } from "./useServerQuery";
 import { filtersToParam, pickPrimaryFilters } from "../lib/filtersToParam";
 
-// KPI cards now apply the same global filters (Region/Category/Brand/
-// Distributor, plus multi-select Year/Month) as every other Primary widget
-// — see shared/primaryQueries.js's getPrimaryKpis for the DE-matching MTD/
-// FYTD cross-filter logic this used to skip.
+// KPI cards apply the same global filters (Region/Category/Brand/
+// Distributor, plus multi-select Year/Month) as every other Primary widget.
 export function usePrimaryKpis(filters) {
   const { refreshKey } = useData();
   const param = filtersToParam(pickPrimaryFilters(filters));

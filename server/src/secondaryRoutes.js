@@ -10,8 +10,8 @@ import {
   getMonthOverMonth,
   getSecondaryDims,
   getSecondaryMeta,
-} from "../../shared/secondaryQueries.js";
-import { parseFilters as parseFiltersRaw } from "../../shared/httpParams.js";
+} from "../../api/_lib/secondaryQueries.js";
+import { parseFilters as parseFiltersRaw } from "../../api/_lib/httpParams.js";
 
 const parseFilters = (req) => parseFiltersRaw(req.query);
 

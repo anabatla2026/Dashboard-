@@ -32,10 +32,8 @@ export default function DualTrendChart({
   const [hoverIdx, setHoverIdx] = useState(null);
 
   const { dates, secSeries, priSeries } = useMemo(() => {
-    // Both sides arrive already grouped by date from the server now — both
-    // Primary and Secondary are Snowflake-backed (see hooks/useSecondaryTrend
-    // and hooks/usePrimaryTrend), too much history to ship raw rows for
-    // client-side summing the way the single-month Excel export allowed.
+    // Both sides arrive already grouped by date from the server (see
+    // hooks/useSecondaryTrend and hooks/usePrimaryTrend).
     const secMap = toDateMap(secondaryTrend);
     const priMap = toDateMap(primaryTrend);
     const dates = Array.from(new Set([...secMap.keys(), ...priMap.keys()])).sort();

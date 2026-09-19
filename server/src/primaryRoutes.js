@@ -7,8 +7,8 @@ import {
   getPrimaryMonthOverMonth,
   getPrimaryDims,
   getPrimaryMeta,
-} from "../../shared/primaryQueries.js";
-import { parseFilters as parseFiltersRaw } from "../../shared/httpParams.js";
+} from "../../api/_lib/primaryQueries.js";
+import { parseFilters as parseFiltersRaw } from "../../api/_lib/httpParams.js";
 
 const parseFilters = (req) => parseFiltersRaw(req.query);
 

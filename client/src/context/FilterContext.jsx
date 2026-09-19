@@ -6,12 +6,9 @@ const FilterContext = createContext(null);
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// The "SD" app-user tag: its secondary sales rows overstate real sales, so
-// it's excluded by default. Per the DE's rule (confirmed 2026-09-18,
-// matching the mandatory server-side STANDING_FILTER in
-// shared/secondaryQueries.js) only the bare "SD" value is excluded — "SD -
-// OB", "MDSD", and "OB" are all real tags that stay checked/included by
-// default. Kept out of emptyFilters()'s blank slate — see resetAll.
+// The "SD" app-user tag overstates real sales, so it's excluded by default
+// (only the bare "SD" value — "SD - OB", "MDSD", "OB" stay included). Kept
+// out of emptyFilters()'s blank slate — see resetAll.
 const APP_USER_DEFAULT_EXCLUDE = new Set(["SD"]);
 
 export function FilterProvider({ children }) {
@@ -33,12 +30,10 @@ export function FilterProvider({ children }) {
     setFilters(next);
   }, []);
 
-  // One-time defaults applied once secondary dims/meta are loaded: MTD view
-  // starts on the previous month (M-1), and the SD app-user tag starts
-  // excluded. Both Primary and Secondary are Snowflake-backed now (see
-  // DataContext) — there's no raw row array to inspect any more, so "does
-  // last month have data" is approximated from Secondary's known date range
-  // instead of an exact per-(year,month) check.
+  // One-time defaults once secondary dims/meta are loaded: MTD view starts
+  // on the previous month (M-1), and the SD app-user tag starts excluded.
+  // "Does last month have data" is approximated from Secondary's known
+  // date range.
   useEffect(() => {
     if (defaultsApplied.current || !secondaryDims || !secondaryMeta) return;
     defaultsApplied.current = true;
@@ -46,11 +41,8 @@ export function FilterProvider({ children }) {
     const now = new Date();
     const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const prevMonthIdx = prevMonthDate.getMonth();
-    // The Year filter is a fiscal-year-END label now (Sep 2026 -> "2027"),
-    // not the calendar year — see shared/secondaryQueries.js's
-    // FISCAL_YEAR_EXPR. Jul-Dec rows belong to the fiscal year ending the
-    // FOLLOWING calendar year; Jan-Jun rows belong to the one ending that
-    // same calendar year.
+    // Year filter is a fiscal-year-END label (Sep 2026 -> "2027"): Jul-Dec
+    // rows belong to the fiscal year ending the following calendar year.
     const prevYear = prevMonthIdx >= 6 ? prevMonthDate.getFullYear() + 1 : prevMonthDate.getFullYear();
     const prevMonthName = MONTH_SHORT[prevMonthIdx];
     const maxDate = secondaryMeta.dateRange?.max ? new Date(`${secondaryMeta.dateRange.max}T00:00:00`) : null;

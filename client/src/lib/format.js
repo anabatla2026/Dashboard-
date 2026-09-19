@@ -43,11 +43,9 @@ export function niceMax(v) {
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // `granularity` matches a trend query's bucket size ("day" | "week" |
-// "month" — see shared/primaryQueries.js / shared/secondaryQueries.js's
-// getPrimaryTrend/getSecondaryTrend). A "day" or "week" point is still one
-// specific date (week buckets are labeled by their start date, e.g. "Sep
-// 1" meaning the week beginning then) so the day-of-month stays in the
-// label; a "month" point has no day component worth showing.
+// "month"). A "day" or "week" point is still one specific date (week
+// buckets are labeled by their start date), so the day-of-month stays in
+// the label; a "month" point has no day component worth showing.
 export function formatDateLabel(iso, granularity = "day") {
   if (typeof iso !== "string") return String(iso);
   const parts = iso.split("-");

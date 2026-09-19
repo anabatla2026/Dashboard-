@@ -4,13 +4,10 @@ import { FISCAL_MONTH_ORDER } from "../lib/period";
 import { useSecondaryMonthOverMonth, usePrimaryMonthOverMonth } from "../hooks/useMonthOverMonthServer";
 import WidgetInfo from "./WidgetInfo";
 
-// Replaces the old Distributor Performance table per MOM 2026-09-02 §6.
 // Layout: Month | Primary Sales Value | Secondary Sales Value, filterable by
-// Fiscal Year (a local selector, independent of the global filter bar). Both
-// sides are Snowflake-backed (see hooks/useMonthOverMonthServer.js). The
-// Region selector this widget used to have has been removed — the DE asked
-// (2026-09-16) to disable Region on both Primary and Secondary's MoM for
-// now, pending a proper region mapping.
+// Fiscal Year (a local selector, independent of the global filter bar).
+// Region filtering is disabled on this widget pending a proper region
+// mapping.
 function toMonthMap(rows) {
   const map = new Map(FISCAL_MONTH_ORDER.map((m) => [m, 0]));
   for (const r of rows) map.set(r.month, (map.get(r.month) || 0) + (r.netSales || 0));
@@ -72,7 +69,7 @@ export default function MonthOverMonthTable({ filters, secondaryDateRange, prima
           )}
           <WidgetInfo
             title="Month-over-Month Sales"
-            summary="Primary and Secondary net sales for every month of the selected fiscal year (1 July – 30 June), side by side. Replaces the old Distributor Performance table per the 2026-09-02 requirements review. Fiscal Year is a local selector on this widget, independent of the global filter bar — the fiscal year list is built from each source's known date range, so it grows automatically as more is loaded. Region filtering is temporarily disabled on this widget pending a data mapping fix."
+            summary="Primary and Secondary net sales for every month of the selected fiscal year (1 July – 30 June), side by side. Fiscal Year is a local selector on this widget, independent of the global filter bar — the fiscal year list is built from each source's known date range, so it grows automatically as more is loaded. Region filtering is temporarily disabled on this widget pending a data mapping fix."
             query="SUM(netSales) grouped by fiscal month, primary vs secondary, for the selected fiscal year."
           />
         </div>

@@ -7,17 +7,13 @@ import { makeDimResolver } from "../lib/filterValueResolver";
 
 // Drives a chart's in-place hierarchy navigation (e.g. Category -> Brand ->
 // SKU): clicking a mark advances the chart to the next level, scoped to
-// that value, with a breadcrumb to go back. Where a level is also a real
-// global filter dimension, drilling into it cross-filters the rest of the
-// dashboard too (same mechanism the plain useDrill hook uses) — the two
-// stay in sync in both directions: clearing the dimension's global filter
-// (via the filter bar, or "Clear all") snaps the breadcrumb back to match.
+// that value, with a breadcrumb to go back. Where a level is also a global
+// filter dimension, drilling into it cross-filters the rest of the
+// dashboard too, and the two stay in sync in both directions.
 //
-// Charts group by (and display) the DE's friendly NAME for cat/dist, but
-// the global filter tracks the mapping table's CODE for those dims (see
-// shared/filterOptions.js) — each path step keeps both: `value` is what's
-// written to/compared against filters[dim], `label` is what the breadcrumb
-// shows (see lib/filterValueResolver.js).
+// Each path step keeps both `value` (written to/compared against
+// filters[dim]) and `label` (what the breadcrumb shows) — see
+// lib/filterValueResolver.js.
 export function useDrillPath(rootDim) {
   const { filters, setFilter } = useFilters();
   const { filterOptions } = useData();

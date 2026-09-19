@@ -4,16 +4,13 @@ import { DRILLABLE } from "../lib/dims";
 import { makeDimResolver } from "../lib/filterValueResolver";
 
 // Lets a chart's marks act as click-to-filter drill targets: clicking a bar
-// or slice scopes the whole dashboard to exactly that value (same
-// FilterContext the global filter bar writes to); clicking the same,
-// already-sole-selected value again clears it — drilling back out.
+// or slice scopes the whole dashboard to that value; clicking the same,
+// already-sole-selected value again clears it.
 //
-// Charts group by (and display) the DE's friendly NAME column for cat/dist
-// (e.g. "Baby Diapers"), but the global filter now tracks the mapping
-// table's CODE for those dims (see shared/filterOptions.js) — a mark's
-// clicked label is resolved to that code before it's ever compared with or
-// written to filters[dim]; only the drill-chip's displayed text is resolved
-// back to the friendly name.
+// Charts display a friendly NAME (e.g. "Baby Diapers") for cat/dist, but
+// the global filter tracks the mapping table's CODE — a mark's clicked
+// label is resolved to that code before it's compared/written; only the
+// drill-chip's displayed text is resolved back to the friendly name.
 export function useDrill(dim) {
   const { filters, setFilter } = useFilters();
   const { filterOptions } = useData();

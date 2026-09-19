@@ -38,19 +38,16 @@ const DUAL_TYPES = new Set(["dual-bar-h", "dual-trend"]);
 const SERIES_HUE_SECONDARY = "--hue-ch";
 const SERIES_HUE_PRIMARY = "--hue-bu";
 
-// Secondary sales is Snowflake-backed (see dashboard-query-reference.md and
-// the shared/secondaryQueries.js layer it maps to) — these charts fetch
-// their own pre-aggregated GROUP BY from the server instead of computing
-// from a client-held row array. Keyed by the chart's root `dim`.
+// These charts fetch their own pre-aggregated GROUP BY from the server,
+// keyed by the chart's root `dim`.
 const SERVER_ENDPOINTS = {
   chType: secondaryApi.channelType,
   cat: secondaryApi.category,
   brand: secondaryApi.brand,
   region: secondaryApi.region,
 };
-// Primary is Snowflake-backed now too (GOLD.ZFI_SCO_VW) — only category and
-// brand have a primary equivalent; chType and region are secondary-only
-// concepts.
+// Only category and brand have a Primary equivalent; chType and region are
+// Secondary-only concepts.
 const PRIMARY_SERVER_ENDPOINTS = {
   cat: primaryApi.category,
   brand: primaryApi.brand,
@@ -83,9 +80,8 @@ export default function ChartCard({
   const { filters } = useFilters();
   const isDual = DUAL_TYPES.has(type);
   const isTrendDual = type === "dual-trend";
-  // Daily is fine for one month; once several months are selected a daily
-  // series is a lot of points, so the trend chart offers week/month
-  // bucketing instead — see shared/primaryQueries.js's TREND_DATE_EXPR.
+  // Daily is fine for one month; once several months are selected the trend
+  // chart offers week/month bucketing instead.
   const isMultiMonth = (filters.month?.size || 0) > 1;
   const [granularity, setGranularity] = useState("day");
   const effectiveGranularity = isMultiMonth ? granularity : "day";
@@ -99,9 +95,7 @@ export default function ChartCard({
   const isAggType = AGGREGATED_TYPES.has(effectiveType);
 
   // Both hooks are always called (rules of hooks) — only one's output is
-  // actually used, based on whether this chart type supports in-place
-  // hierarchy navigation (bar/doughnut) or just simple cross-filtering
-  // (Pareto, trend).
+  // used, based on whether this chart type supports hierarchy navigation.
   const simpleDrill = useDrill(effectiveDim);
   const pathDrill = useDrillPath(effectiveDim);
   const useHierarchy = isAggType && pathDrill.hasHierarchy;
@@ -125,11 +119,8 @@ export default function ChartCard({
 
   const aggDim = useHierarchy ? pathDrill.currentDim : effectiveDim;
 
-  // Only chType has a drill level (`channel`) that isn't itself a real
-  // global filter dimension — every other hierarchy level is kept in sync
-  // with the global filters by useDrillPath already, so the server query
-  // just needs `filters` + `aggDim`. See shared/secondaryQueries.js's
-  // groupByOne for the other half of this.
+  // Only chType has a drill level (`channel`) that isn't itself a global
+  // filter dimension, so it's passed to the server query separately.
   const channelParent = useServerAgg && dim === "chType" ? pathDrill.path.find((s) => s.dim === "channel")?.value : undefined;
   const { data: serverAgg } = useServerAggregate(
     useServerAgg ? SERVER_ENDPOINTS[dim] : NOOP_FETCH,
@@ -137,9 +128,6 @@ export default function ChartCard({
     aggDim,
     channelParent ? { channel: channelParent } : {}
   );
-  // Primary's side of a dual chart — only relevant for cat/brand (chType and
-  // region have no primary equivalent), so PRIMARY_SERVER_ENDPOINTS[dim] is
-  // undefined for those and falls back to the no-op fetcher.
   const { data: primaryServerAgg } = useServerAggregate(
     useServerAgg && effectiveType === "dual-bar-h" ? PRIMARY_SERVER_ENDPOINTS[dim] || NOOP_FETCH : NOOP_FETCH,
     pickPrimaryFilters(filters),
@@ -175,12 +163,9 @@ export default function ChartCard({
 
   const canDrillAny = isAggType ? !!(useHierarchy ? pathDrill.onDrill || pathDrill.levels.length > 1 : simpleDrill.drillable) : simpleDrill.drillable;
 
-  // bar-h / dual-bar-h stretch their svg non-uniformly (preserveAspectRatio
-  // "none") to fill the card — if the viewBox width doesn't match the card's
-  // real rendered width, the browser can't resolve the svg's percentage
-  // height and falls back to the viewBox's intrinsic ratio, which balloons
-  // the whole card. Measuring the real width and feeding it back in as the
-  // viewBox width keeps the two in sync at any card size.
+  // bar-h / dual-bar-h stretch their svg to fill the card — the viewBox
+  // width has to track the real rendered width or the svg's percentage
+  // height falls back to its intrinsic ratio and balloons the card.
   const isRowChart = effectiveType === "bar-h" || effectiveType === "dual-bar-h";
   const [bodyRef, measuredWidth] = useElementWidth(chartWidth || 480);
   const effectiveChartWidth = isRowChart ? measuredWidth : chartWidth;

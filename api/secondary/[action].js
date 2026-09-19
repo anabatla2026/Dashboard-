@@ -1,8 +1,5 @@
-// See api/primary/[action].js for why this is one dynamic-route file
-// instead of one file per endpoint — Vercel's Hobby plan caps a deployment
-// at 12 serverless functions. Replaces all 10 secondary/*.js files; URL
-// shape the client calls (/api/secondary/kpis, /api/secondary/channel-type,
-// ...) is unchanged.
+// Single dynamic-route handler for all Secondary endpoints — see
+// api/primary/[action].js for why.
 import {
   getSecondaryKpis,
   getSecondaryTrend,
@@ -14,8 +11,8 @@ import {
   getMonthOverMonth,
   getSecondaryDims,
   getSecondaryMeta,
-} from "../../shared/secondaryQueries.js";
-import { parseFilters } from "../../shared/httpParams.js";
+} from "../_lib/secondaryQueries.js";
+import { parseFilters } from "../_lib/httpParams.js";
 
 export default async function handler(req, res) {
   const { action } = req.query;

@@ -77,10 +77,9 @@ export function calcYtdGoly(rows, filters, key = "netSales") {
 }
 
 // Accepts either the legacy single { year, month } shape or the multi-
-// select { years, months } shape the server's KPI endpoints now return
-// (see shared/primaryQueries.js / shared/secondaryQueries.js's
-// getPrimaryKpis/getSecondaryKpis) — multiple selected months/years render
-// as a comma list, e.g. "Sep, Nov 2025, 2026".
+// select { years, months } shape the server's KPI endpoints return —
+// multiple selected months/years render as a comma list, e.g.
+// "Sep, Nov 2025, 2026".
 export function formatPeriod(period) {
   if (!period) return "—";
   if (period.years || period.months) {

@@ -9,7 +9,7 @@ import {
   getMonthOverMonth,
   getSecondaryDims,
   getSecondaryMeta,
-} from "../shared/secondaryQueries.js";
+} from "../api/_lib/secondaryQueries.js";
 
 function show(label, v) {
   console.log(`\n=== ${label} ===`);

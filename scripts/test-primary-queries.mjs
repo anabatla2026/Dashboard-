@@ -6,7 +6,7 @@ import {
   getPrimaryMonthOverMonth,
   getPrimaryDims,
   getPrimaryMeta,
-} from "../shared/primaryQueries.js";
+} from "../api/_lib/primaryQueries.js";
 
 function show(label, v) {
   console.log(`\n=== ${label} ===`);

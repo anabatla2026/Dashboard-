@@ -1,9 +1,6 @@
-// Vercel's Hobby plan caps a deployment at 12 serverless functions — one
-// file per endpoint (7 for primary, 10 for secondary) blew past that. This
-// single dynamic-route file replaces all 7 primary/*.js files; the URL
-// shape the client already calls (/api/primary/kpis, /api/primary/trend,
-// ...) is unchanged since Vercel maps /api/primary/:action to this file's
-// `action` param automatically.
+// Single dynamic-route handler for all Primary endpoints (Vercel's Hobby
+// plan caps deployments at 12 functions, so one file per action isn't an
+// option). Vercel maps /api/primary/:action to the `action` param below.
 import {
   getPrimaryKpis,
   getPrimaryTrend,
@@ -12,8 +9,8 @@ import {
   getPrimaryMonthOverMonth,
   getPrimaryDims,
   getPrimaryMeta,
-} from "../../shared/primaryQueries.js";
-import { parseFilters } from "../../shared/httpParams.js";
+} from "../_lib/primaryQueries.js";
+import { parseFilters } from "../_lib/httpParams.js";
 
 export default async function handler(req, res) {
   const { action } = req.query;

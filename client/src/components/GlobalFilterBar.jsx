@@ -5,11 +5,10 @@ import { CalendarIcon } from "./Icons";
 
 const TIME_KEYS = new Set(["year", "month"]);
 
-// Region/Category/Brand/Channel Type/Town/Distributor now come from the
-// DE's mapping-view-backed filterOptions (see DataContext.jsx /
-// shared/filterOptions.js) as { value, label } pairs, overriding
-// secondaryDims's equivalent keys below; Year/Month/Segment/App User Tag
-// still come from secondaryDims as plain value lists.
+// Region/Category/Brand/Channel Type/Town/Distributor come from filterOptions
+// (see DataContext.jsx) as { value, label } pairs, overriding secondaryDims's
+// equivalent keys; Year/Month/Segment/App User Tag come from secondaryDims
+// as plain value lists.
 export default function GlobalFilterBar() {
   const { dims, filters, setFilter, resetAll, activeCount } = useFilters();
   const { secondaryDims, filterOptions } = useData();

@@ -25,8 +25,7 @@ export const secondaryApi = {
   region: ({ filters, level }) => get("region", { filters, level }),
   regionTarget: (filters) => get("region-target", { filters }),
   // Region intentionally not passed — disabled on both Primary and
-  // Secondary's MoM per the DE (2026-09-16): region data has issues pending
-  // a proper mapping. See shared/secondaryQueries.js's getMonthOverMonth.
+  // Secondary's MoM (region data has issues pending a proper mapping).
   mom: ({ fiscalYearStart, filters }) => get("mom", { fiscalYearStart, filters }),
   dims: () => get("dims"),
   meta: () => get("meta"),

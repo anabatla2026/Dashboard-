@@ -1,4 +1,4 @@
-import { getFilterOptions } from "../shared/filterOptions.js";
+import { getFilterOptions } from "./_lib/filterOptions.js";
 
 export default async function handler(req, res) {
   try {

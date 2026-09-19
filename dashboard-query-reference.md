@@ -1,8 +1,8 @@
 > **⚠️ Superseded 2026-09-18.** The DE supplied proper Snowflake queries and
 > filter rules on 2026-09-17 (`primary 1st Dash with all filters.sql`,
 > `Secondary 1st Dash with all filters.sql`), now implemented in
-> `shared/filterOptions.js`, `shared/primaryQueries.js` and
-> `shared/secondaryQueries.js`. Notably, since this doc was written:
+> `api/_lib/filterOptions.js`, `api/_lib/primaryQueries.js` and
+> `api/_lib/secondaryQueries.js`. Notably, since this doc was written:
 > Region and Distributor now apply to Primary too (previously excluded —
 > §1's "no region field"/"IDs not reconciled" notes below no longer hold);
 > Town is now Secondary-only (no longer applies to Primary); Region/
