@@ -1,8 +1,14 @@
 import { query, SNOWFLAKE_DATABASE } from "./snowflakeClient.js";
 
 const SEC = `${SNOWFLAKE_DATABASE}.GOLD.SALESFLO_DATADUMP_VW`;
+const PRI = `${SNOWFLAKE_DATABASE}.GOLD.ZFI_SCO_VW`;
+const MT_DIRECT = `${SNOWFLAKE_DATABASE}.GOLD.MT_DIRECT_DISTRIBUTORS_VW`;
 const TARGETS = `${SNOWFLAKE_DATABASE}.GOLD.TARGETS_VW`;
 const DIST_MASTER = `${SNOWFLAKE_DATABASE}.GOLD.DISTRIBUTOR_MASTER_VW`;
+const REGION_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_REGION_MAPPING_1ST_DASH`;
+const CATEGORY_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_CATEGORY_MAPPING_1ST_DASH`;
+const BRAND_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_BRAND_MAPPING_1ST_DASH`;
+const DIST_FILTER = `${SNOWFLAKE_DATABASE}.GOLD.VW_DISTRIBUTOR_FILTER_1ST_DASH`;
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // Fiscal month order (Jul-Jun) for sorting the Month dropdown; MONTH_SHORT
@@ -35,23 +41,77 @@ const COLUMN_MAP = {
   brand: ["BRAND"],
   chType: ["CHANNEL_TYPE"],
   town: ["TOWN_NAME"],
-  dist: ["DISTRIBUTOR_CODE"],
+  dist: ["UPPER(TRIM(DISTRIBUTOR_CODE_RD))"],
   appUser: ["APP_USER_TAGGED_TITLE"],
 };
 
-// Distributor dropdown value is a DISTRIBUTOR_CODE that may be Primary-only
-// (no "D" prefix, not a valid SalesFlo id) — those aren't valid Secondary
-// filter values, so drop them; an empty result must still exclude
-// everything rather than silently ignore the filter.
-function withResolvedDist(filters = {}) {
-  if (!Array.isArray(filters.dist) || filters.dist.length === 0) return filters;
-  const dCodes = filters.dist.filter((c) => typeof c === "string" && c.trim().toUpperCase().startsWith("D"));
-  return { ...filters, dist: dCodes.length ? dCodes : ["__NO_SECONDARY_MATCH__"] };
+async function resolveSecondaryFilters(filters = {}) {
+  let resolved = { ...filters };
+  const mapped = [
+    ["region", REGION_MAPPING, "SOURCE = 'SECONDARY'", ["REGION_CODE", "REGION_NAME"]],
+    ["cat", CATEGORY_MAPPING, "IN_SECONDARY = 1", ["CATEGORY_CODE", "CATEGORY_NAME"]],
+    ["brand", BRAND_MAPPING, "IN_SECONDARY = 1", ["BRAND"]],
+  ];
+  for (const [key, table, predicate, columns] of mapped) {
+    const values = resolved[key];
+    if (!Array.isArray(values) || values.length === 0) continue;
+    const selected = values.map((value) => String(value).trim().toUpperCase());
+    const rows = await query(
+      `SELECT * FROM ${table}
+       WHERE ${predicate}
+         AND (${columns.map((column) => `UPPER(TRIM(${column})) IN (${values.map(() => "?").join(", ")})`).join(" OR ")})`,
+      columns.flatMap(() => selected)
+    );
+    if (rows.length === 0) {
+      resolved[key] = undefined;
+      continue;
+    }
+    const expanded = new Set(selected);
+    for (const row of rows) for (const column of columns) {
+      const value = String(row[column] || "").trim().toUpperCase();
+      if (value) expanded.add(value);
+    }
+    resolved[key] = [...expanded];
+  }
+  if (Array.isArray(resolved.dist) && resolved.dist.length > 0) {
+    const selected = resolved.dist.map((value) => String(value).trim().toUpperCase());
+    const rows = await query(
+      `SELECT DISTINCT DISTRIBUTOR_SAP_CODE AS V FROM ${DIST_FILTER}
+       WHERE (UPPER(TRIM(DISTRIBUTOR_CODE)) IN (${selected.map(() => "?").join(", ")})
+           OR UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) IN (${selected.map(() => "?").join(", ")})
+           OR UPPER(TRIM(DISTRIBUTOR_SAP_NAME)) IN (${selected.map(() => "?").join(", ")}))
+         AND DISTRIBUTOR_SAP_CODE IS NOT NULL`,
+      [...selected, ...selected, ...selected]
+    );
+    resolved.dist = rows.length ? rows.map((row) => row.V) : undefined;
+  }
+  return resolved;
+}
+
+const PRI_FY_EXPR = "(CASE WHEN MONTH(invoice_Date) >= 7 THEN YEAR(invoice_Date) + 1 ELSE YEAR(invoice_Date) END)";
+const PRI_MONTH_EXPR = "TO_CHAR(invoice_Date, 'Mon')";
+const PRI_FISCAL_MONTH_NO_EXPR = "(CASE WHEN MONTH(invoice_Date) >= 7 THEN MONTH(invoice_Date) - 6 ELSE MONTH(invoice_Date) + 6 END)";
+const PRI_FILTER_COLUMNS = {
+  region: ["UPPER(TRIM(p.REGION))", "UPPER(TRIM(p.REGION_NAME))"],
+  cat: ["UPPER(TRIM(p.MATERIAL_GROUP))", "UPPER(TRIM(p.MATERIAL_GROUP_NAME))"],
+  brand: ["UPPER(TRIM(p.BRAND))"],
+  dist: ["UPPER(TRIM(p.PARTY_CODE))"],
+};
+
+function primaryFilterWhere(filters = {}) {
+  const clauses = [];
+  const binds = [];
+  for (const [key, columns] of Object.entries(PRI_FILTER_COLUMNS)) {
+    const values = filters[key];
+    if (!Array.isArray(values) || values.length === 0) continue;
+    clauses.push(`(${columns.map((column) => `${column} IN (${values.map(() => "?").join(", ")})`).join(" OR ")})`);
+    for (const column of columns) binds.push(...values);
+  }
+  return { clause: clauses.length ? `AND ${clauses.join(" AND ")}` : "", binds };
 }
 
 // Builds "AND col IN (?, ?) AND ..." plus the matching bind array from a
 // filters object. `skip` excludes dimensions the caller handles separately.
-// Apply withResolvedDist() to `filters` first if it may carry `dist`.
 export function buildWhere(filters = {}, { skip = [] } = {}) {
   const clauses = [];
   const binds = [];
@@ -68,6 +128,144 @@ export function buildWhere(filters = {}, { skip = [] } = {}) {
 
 function inList(values) {
   return values.map(() => "?").join(", ");
+}
+
+async function resolvePrimaryTopupFilters(filters = {}) {
+  let resolved = { ...filters };
+  const mapped = [
+    ["region", REGION_MAPPING, "SOURCE = 'PRIMARY'", ["REGION_CODE", "REGION_NAME"]],
+    ["cat", CATEGORY_MAPPING, "IN_PRIMARY = 1", ["CATEGORY_CODE", "CATEGORY_NAME"]],
+    ["brand", BRAND_MAPPING, "IN_PRIMARY = 1", ["BRAND"]],
+  ];
+  for (const [key, table, predicate, columns] of mapped) {
+    const values = resolved[key];
+    if (!Array.isArray(values) || values.length === 0) continue;
+    const selected = values.map((value) => String(value).trim().toUpperCase());
+    const rows = await query(
+      `SELECT * FROM ${table}
+       WHERE ${predicate}
+         AND (${columns.map((column) => `UPPER(TRIM(${column})) IN (${values.map(() => "?").join(", ")})`).join(" OR ")})`,
+      columns.flatMap(() => selected)
+    );
+    if (rows.length === 0) {
+      resolved[key] = undefined;
+      continue;
+    }
+    const expanded = new Set(selected);
+    for (const row of rows) for (const column of columns) {
+      const value = String(row[column] || "").trim().toUpperCase();
+      if (value) expanded.add(value);
+    }
+    resolved[key] = [...expanded];
+  }
+  if (Array.isArray(resolved.dist) && resolved.dist.length > 0) {
+    const selected = resolved.dist.map((value) => String(value).trim().toUpperCase());
+    const rows = await query(
+      `SELECT DISTINCT DISTRIBUTOR_SAP_CODE AS V FROM ${DIST_FILTER}
+       WHERE (UPPER(TRIM(DISTRIBUTOR_CODE)) IN (${selected.map(() => "?").join(", ")})
+           OR UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) IN (${selected.map(() => "?").join(", ")})
+           OR UPPER(TRIM(DISTRIBUTOR_SAP_NAME)) IN (${selected.map(() => "?").join(", ")}))
+         AND DISTRIBUTOR_SAP_CODE IS NOT NULL`,
+      [...selected, ...selected, ...selected]
+    );
+    resolved.dist = rows.length ? rows.map((row) => row.V) : undefined;
+  }
+  return resolved;
+}
+
+function primaryPeriodParts(years, months) {
+  const cutoff = Math.max(...months.map((month) => FISCAL_MONTH_NO[month]));
+  return {
+    mtd: `(${PRI_FY_EXPR} IN (${inList(years)}) AND ${PRI_MONTH_EXPR} IN (${inList(months)}))`,
+    fytd: `(${PRI_FY_EXPR} IN (${inList(years)}) AND ${PRI_FISCAL_MONTH_NO_EXPR} <= ?)`,
+    mtdBinds: [...years, ...months],
+    fytdBinds: [...years, cutoff],
+  };
+}
+
+async function getPrimaryTopupKpis(filters, years, mtdMonths, fytdMonths) {
+  const resolved = await resolvePrimaryTopupFilters(filters);
+  const { clause, binds } = primaryFilterWhere(resolved);
+  const lyYears = years.map((year) => year - 1);
+  const mtd = primaryPeriodParts(years, mtdMonths);
+  const fytd = primaryPeriodParts(years, fytdMonths);
+  const lyMtd = primaryPeriodParts(lyYears, mtdMonths);
+  const lyFytd = primaryPeriodParts(lyYears, fytdMonths);
+  const rows = await query(
+    `SELECT
+       SUM(CASE WHEN ${mtd.mtd} THEN p.Value END) AS MTD_SALES,
+       SUM(CASE WHEN ${mtd.mtd} THEN p.Qty_In_Ctn END) AS MTD_CTN,
+       SUM(CASE WHEN ${mtd.mtd} THEN p.Qty_In_Pcs END) AS MTD_PCS,
+       SUM(CASE WHEN ${lyMtd.mtd} THEN p.Value END) AS LY_MTD_SALES,
+       SUM(CASE WHEN ${fytd.fytd} THEN p.Value END) AS FYTD_SALES,
+       SUM(CASE WHEN ${fytd.fytd} THEN p.Qty_In_Ctn END) AS FYTD_CTN,
+       SUM(CASE WHEN ${fytd.fytd} THEN p.Qty_In_Pcs END) AS FYTD_PCS,
+       SUM(CASE WHEN ${lyFytd.fytd} THEN p.Value END) AS LY_FYTD_SALES
+     FROM ${PRI} p
+     JOIN ${MT_DIRECT} m
+       ON UPPER(TRIM(p.PARTY_CODE)) = UPPER(TRIM(m.DISTRIBUTOR_SAP_CODE))
+    WHERE p.invoice_Date IS NOT NULL ${clause}`,
+    [...mtd.mtdBinds, ...mtd.mtdBinds, ...mtd.mtdBinds, ...lyMtd.mtdBinds, ...fytd.fytdBinds, ...fytd.fytdBinds, ...fytd.fytdBinds, ...lyFytd.fytdBinds, ...binds]
+  );
+  return rows[0] || {};
+}
+
+async function getPrimaryTopupRows(filters, years, months, groupExpr, includeVolume = false) {
+  const resolved = await resolvePrimaryTopupFilters(filters);
+  const { clause, binds } = primaryFilterWhere(resolved);
+  const period = primaryPeriodParts(years, months);
+  const volume = includeVolume ? ", SUM(p.Qty_In_Ctn) AS VOLUME_CTN, SUM(p.Qty_In_Pcs) AS VOLUME_PCS" : "";
+  const rows = await query(
+    `SELECT ${groupExpr} AS LABEL, SUM(p.Value) AS NET_SALES${volume}
+     FROM ${PRI} p
+     JOIN ${MT_DIRECT} m
+       ON UPPER(TRIM(p.PARTY_CODE)) = UPPER(TRIM(m.DISTRIBUTOR_SAP_CODE))
+     WHERE p.invoice_Date IS NOT NULL AND ${period.mtd}${clause}
+     GROUP BY ${groupExpr}
+     ORDER BY NET_SALES DESC`,
+    [...period.mtdBinds, ...binds]
+  );
+  return rows;
+}
+
+async function getPrimaryTopupRegionAchievement(filters, years, mtdMonths, fytdMonths) {
+  const resolved = await resolvePrimaryTopupFilters(filters);
+  const { clause, binds } = primaryFilterWhere(resolved);
+  const mtd = primaryPeriodParts(years, mtdMonths);
+  const fytd = primaryPeriodParts(years, fytdMonths);
+  return query(
+    `SELECT p.REGION AS REGION,
+            SUM(CASE WHEN ${mtd.mtd} THEN p.Value END) AS ACHIEVEMENT_MTD,
+            SUM(CASE WHEN ${fytd.fytd} THEN p.Value END) AS ACHIEVEMENT_FYTD
+     FROM ${PRI} p
+     JOIN ${MT_DIRECT} m
+       ON UPPER(TRIM(p.PARTY_CODE)) = UPPER(TRIM(m.DISTRIBUTOR_SAP_CODE))
+    WHERE p.invoice_Date IS NOT NULL ${clause}
+     GROUP BY p.REGION`,
+    [...mtd.mtdBinds, ...fytd.fytdBinds, ...binds]
+  );
+}
+
+async function getPrimaryTopupMom(filters, fiscalYearStart) {
+  const resolved = await resolvePrimaryTopupFilters(filters);
+  const { clause, binds } = primaryFilterWhere(resolved);
+  const fyEndExclusive = `${Number(fiscalYearStart.slice(0, 4)) + 1}-${fiscalYearStart.slice(5)}`;
+  return query(
+    `SELECT TO_CHAR(p.invoice_Date, 'Mon') AS MONTH,
+            YEAR(p.invoice_Date) AS YEAR,
+            SUM(p.Value) AS NET_SALES
+     FROM ${PRI} p
+     JOIN ${MT_DIRECT} m
+       ON UPPER(TRIM(p.PARTY_CODE)) = UPPER(TRIM(m.DISTRIBUTOR_SAP_CODE))
+     WHERE p.invoice_Date >= ? AND p.invoice_Date < ?${clause}
+     GROUP BY TO_CHAR(p.invoice_Date, 'Mon'), YEAR(p.invoice_Date)
+     ORDER BY CASE TO_CHAR(p.invoice_Date, 'Mon')
+       WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
+       WHEN 'Nov' THEN 5 WHEN 'Dec' THEN 6 WHEN 'Jan' THEN 7 WHEN 'Feb' THEN 8
+       WHEN 'Mar' THEN 9 WHEN 'Apr' THEN 10 WHEN 'May' THEN 11 WHEN 'Jun' THEN 12
+     END`,
+    [fiscalYearStart, fyEndExclusive, ...binds]
+  );
 }
 
 async function currentFiscal() {
@@ -121,7 +319,8 @@ export async function getSecondaryKpis({ years, months, filters = {} } = {}) {
   const lyYears = y.map((n) => n - 1);
   const cutoffNo = Math.max(...fytdMonths.map((m) => FISCAL_MONTH_NO[m]));
 
-  const { clause, binds: filterBinds } = buildWhere(withResolvedDist(filters), { skip: ["year", "month"] });
+  const resolvedFilters = await resolveSecondaryFilters(filters);
+  const { clause, binds: filterBinds } = buildWhere(resolvedFilters, { skip: ["year", "month"] });
 
   const sql = `
     SELECT
@@ -162,27 +361,29 @@ export async function getSecondaryKpis({ years, months, filters = {} } = {}) {
     ...filterBinds,
   ];
 
-  const rows = await query(sql, binds);
+  const [rows, topup] = await Promise.all([query(sql, binds), getPrimaryTopupKpis(filters, y, mtdMonths, fytdMonths)]);
   const r = rows[0];
   const goly = (cur, ly) => (ly > 0 ? ((cur - ly) / ly) * 100 : null);
+  const mtdSales = (r.MTD_SALES || 0) + (topup.MTD_SALES || 0);
+  const fytdSales = (r.FYTD_SALES || 0) + (topup.FYTD_SALES || 0);
 
   return {
     period: { years: y, months: mtdMonths },
     mtd: {
-      salesValue: r.MTD_SALES || 0,
-      volumeCtn: r.MTD_CTN || 0,
-      volumePcs: r.MTD_UNITS || 0,
+      salesValue: mtdSales,
+      volumeCtn: (r.MTD_CTN || 0) + (topup.MTD_CTN || 0),
+      volumePcs: (r.MTD_UNITS || 0) + (topup.MTD_PCS || 0),
       productiveStores: r.MTD_STORES || 0,
       productiveDistributors: r.MTD_DIST || 0,
-      goly: goly(r.MTD_SALES || 0, r.LY_MTD_SALES || 0),
+      goly: goly(mtdSales, (r.LY_MTD_SALES || 0) + (topup.LY_MTD_SALES || 0)),
     },
     ytd: {
-      salesValue: r.FYTD_SALES || 0,
-      volumeCtn: r.FYTD_CTN || 0,
-      volumePcs: r.FYTD_UNITS || 0,
+      salesValue: fytdSales,
+      volumeCtn: (r.FYTD_CTN || 0) + (topup.FYTD_CTN || 0),
+      volumePcs: (r.FYTD_UNITS || 0) + (topup.FYTD_PCS || 0),
       productiveStores: r.FYTD_STORES || 0,
       productiveDistributors: r.FYTD_DIST || 0,
-      goly: goly(r.FYTD_SALES || 0, r.LY_FYTD_SALES || 0),
+      goly: goly(fytdSales, (r.LY_FYTD_SALES || 0) + (topup.LY_FYTD_SALES || 0)),
     },
     totalStoreCount: r.TOTAL_STORES || 0,
   };
@@ -196,8 +397,11 @@ const TREND_DATE_EXPR = {
   month: "DATE_TRUNC('month', TO_DATE(DATE))",
 };
 export async function getSecondaryTrend(filters = {}, granularity = "day") {
-  const { clause, binds } = buildWhere(withResolvedDist(await withDefaultPeriod(filters)));
-  const dateExpr = TREND_DATE_EXPR[granularity] || TREND_DATE_EXPR.day;
+  const periodFilters = await withDefaultPeriod(filters);
+  const resolvedFilters = await resolveSecondaryFilters(periodFilters);
+  const { clause, binds } = buildWhere(resolvedFilters);
+  const effectiveGranularity = TREND_DATE_EXPR[granularity] ? granularity : "day";
+  const dateExpr = TREND_DATE_EXPR[effectiveGranularity];
   const rows = await query(
     `SELECT TO_VARCHAR(${dateExpr}, 'YYYY-MM-DD') AS DATE, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
@@ -206,13 +410,21 @@ export async function getSecondaryTrend(filters = {}, granularity = "day") {
      ORDER BY ${dateExpr}`,
     binds
   );
-  return rows.map((r) => ({ date: r.DATE, netSales: r.NET_SALES || 0 }));
+  const years = periodFilters.year || [];
+  const months = periodFilters.month || [];
+  const topupRows = years.length && months.length
+    ? await getPrimaryTopupRows(filters, years.map(Number), months, `TO_VARCHAR(${effectiveGranularity === "day" ? "p.invoice_Date" : `DATE_TRUNC('${effectiveGranularity}', p.invoice_Date)`}, 'YYYY-MM-DD')`)
+    : [];
+  const values = new Map(rows.map((row) => [row.DATE, row.NET_SALES || 0]));
+  for (const row of topupRows) values.set(row.LABEL, (values.get(row.LABEL) || 0) + (row.NET_SALES || 0));
+  return [...values].sort(([a], [b]) => (a > b ? 1 : -1)).map(([date, netSales]) => ({ date, netSales }));
 }
 
 // Generic "group by one column, scoped by the active filters" query shared
 // by every drillable chart.
 async function groupByOne(col, filters, extra = {}) {
-  const { clause, binds } = buildWhere(withResolvedDist(await withDefaultPeriod(filters)));
+  const resolvedFilters = await resolveSecondaryFilters(await withDefaultPeriod(filters));
+  const { clause, binds } = buildWhere(resolvedFilters);
   const extraClauses = [];
   const extraBinds = [];
   for (const [c, v] of Object.entries(extra)) {
@@ -229,6 +441,18 @@ async function groupByOne(col, filters, extra = {}) {
      ORDER BY NET_SALES DESC`,
     [...binds, ...extraBinds]
   );
+  const periodFilters = await withDefaultPeriod(filters);
+  const years = periodFilters.year || [];
+  const months = periodFilters.month || [];
+  const topupGroup = col === "CATEGORY" ? "p.MATERIAL_GROUP_NAME" : col === "BRAND" ? "p.BRAND" : col === "REGION" ? "p.REGION" : null;
+  if (topupGroup && years.length && months.length) {
+    const topupRows = await getPrimaryTopupRows(filters, years.map(Number), months, topupGroup);
+    const values = new Map(rows.map((row) => [row.LABEL, row.NET_SALES || 0]));
+    for (const row of topupRows) values.set(row.LABEL, (values.get(row.LABEL) || 0) + (row.NET_SALES || 0));
+    return [...values]
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
+  }
   return rows.map((r) => ({ label: r.LABEL, value: r.NET_SALES || 0 }));
 }
 
@@ -308,7 +532,7 @@ export async function getRegionTargetVsAchievement({ years, months } = {}) {
   const { years: y, mtdMonths, fytdMonths } = period;
   const cutoffNo = Math.max(...fytdMonths.map((m) => FISCAL_MONTH_NO[m]));
 
-  const [mtdTargets, fytdTargets, achievementRows] = await Promise.all([
+  const [mtdTargets, fytdTargets, achievementRows, topupRows] = await Promise.all([
     targetsByRegion(toCalendarPairs(y, mtdMonths)),
     targetsByRegion(toCalendarPairs(y, fytdMonths)),
     query(
@@ -320,16 +544,24 @@ export async function getRegionTargetVsAchievement({ years, months } = {}) {
        GROUP BY REGION`,
       [...y, ...mtdMonths, ...y, cutoffNo]
     ),
+    getPrimaryTopupRegionAchievement({}, y, mtdMonths, fytdMonths),
   ]);
+
+  const achievementMap = new Map();
+  for (const row of [...achievementRows, ...topupRows]) {
+    const current = achievementMap.get(row.REGION) || { ACHIEVEMENT_MTD: 0, ACHIEVEMENT_FYTD: 0 };
+    current.ACHIEVEMENT_MTD += row.ACHIEVEMENT_MTD || 0;
+    current.ACHIEVEMENT_FYTD += row.ACHIEVEMENT_FYTD || 0;
+    achievementMap.set(row.REGION, current);
+  }
 
   const mtdMap = new Map(mtdTargets.map((r) => [r.REGION, r.TARGET || 0]));
   const fytdMap = new Map(fytdTargets.map((r) => [r.REGION, r.TARGET || 0]));
-  const regions = new Set([...mtdMap.keys(), ...fytdMap.keys(), ...achievementRows.map((r) => r.REGION)]);
+  const regions = new Set([...mtdMap.keys(), ...fytdMap.keys(), ...achievementMap.keys()]);
 
-  const achMap = new Map(achievementRows.map((r) => [r.REGION, r]));
   return [...regions]
     .map((region) => {
-      const a = achMap.get(region);
+      const a = achievementMap.get(region);
       return {
         region,
         mtd: { target: mtdMap.get(region) || 0, achievement: a?.ACHIEVEMENT_MTD || 0 },
@@ -341,7 +573,8 @@ export async function getRegionTargetVsAchievement({ years, months } = {}) {
 
 // Month-over-Month Sales by fiscal year. Region is not filterable here.
 export async function getMonthOverMonth({ fiscalYearStart, filters = {} } = {}) {
-  const { clause, binds } = buildWhere(withResolvedDist(filters), { skip: ["year", "month", "region"] });
+  const resolvedFilters = await resolveSecondaryFilters(filters);
+  const { clause, binds } = buildWhere(resolvedFilters, { skip: ["year", "month", "region"] });
   const fyEndExclusive = `${Number(fiscalYearStart.slice(0, 4)) + 1}-${fiscalYearStart.slice(5)}`;
 
   const rows = await query(
@@ -356,7 +589,15 @@ export async function getMonthOverMonth({ fiscalYearStart, filters = {} } = {}) 
      END`,
     [fiscalYearStart, fyEndExclusive, ...binds]
   );
-  return rows.map((r) => ({ month: r.MONTH, year: r.YEAR, netSales: r.NET_SALES || 0 }));
+  const topupRows = await getPrimaryTopupMom(filters, fiscalYearStart);
+  const values = new Map();
+  for (const row of [...rows, ...topupRows]) {
+    const key = `${row.MONTH}|${row.YEAR}`;
+    const current = values.get(key) || { month: row.MONTH, year: row.YEAR, netSales: 0 };
+    current.netSales += row.NET_SALES || 0;
+    values.set(key, current);
+  }
+  return [...values.values()].sort((a, b) => FISCAL_MONTH_ORDER.indexOf(a.month) - FISCAL_MONTH_ORDER.indexOf(b.month));
 }
 
 // Distinct Year/Month/Segment/App-User-Tag option lists (Region/Category/

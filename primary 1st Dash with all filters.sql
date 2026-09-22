@@ -7,8 +7,8 @@
 -- ✅ PRIMARY KPI #1 — MTD / FYTD (Sales Value + CTN + PCS)
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND + DISTRIBUTOR
 -- =====================================================================
-SET v_years       = '2025';              -- '2025,2026'
-SET v_months      = 'SEP,NOV';           -- 'SEP' | 'SEP,NOV,FEB' | NULL
+SET v_years       = '2027';              -- '2025,2026'
+SET v_months      = 'AUG';           -- 'SEP' | 'SEP,NOV,FEB' | NULL
 SET v_region      = NULL;                -- 'SD,KP'
 SET v_category    = NULL;                -- 'Baby Diapers,Pants'
 SET v_brand       = NULL;                -- 'Bona Plus,Momse'
@@ -117,7 +117,7 @@ mtd_ranges AS (
 SELECT
     -- ================= MTD =================
     SUM(CASE WHEN EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.Posting_Date BETWEEN m.m_start AND m.m_end)
-             THEN v.Total_Value END)            AS MTD_SALES_VALUE,
+             THEN v.Value END)            AS MTD_SALES_VALUE,
     SUM(CASE WHEN EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.Posting_Date BETWEEN m.m_start AND m.m_end)
              THEN v.Qty_In_Ctn END)             AS MTD_VOLUME_CTN,
     SUM(CASE WHEN EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.Posting_Date BETWEEN m.m_start AND m.m_end)
@@ -125,13 +125,14 @@ SELECT
 
     -- ================= FYTD =================
     SUM(CASE WHEN EXISTS (SELECT 1 FROM fy_ranges f WHERE v.Posting_Date BETWEEN f.fy_start AND f.fytd_end)
-             THEN v.Total_Value END)            AS FYTD_SALES_VALUE,
+             THEN v.Value END)            AS FYTD_SALES_VALUE,
     SUM(CASE WHEN EXISTS (SELECT 1 FROM fy_ranges f WHERE v.Posting_Date BETWEEN f.fy_start AND f.fytd_end)
              THEN v.Qty_In_Ctn END)             AS FYTD_VOLUME_CTN,
     SUM(CASE WHEN EXISTS (SELECT 1 FROM fy_ranges f WHERE v.Posting_Date BETWEEN f.fy_start AND f.fytd_end)
              THEN v.Qty_In_Pcs END)             AS FYTD_VOLUME_PCS
 FROM gold.zfi_sco_vw v
 WHERE
+ 
   -- ✅ Conditional REGION (MULTI)
   (
     ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
@@ -192,6 +193,8 @@ WHERE
                       (SELECT distributor_arr FROM sel_filters))
     OR ARRAY_CONTAINS(UPPER(TRIM(v.SHIP_TO_PARTY))::VARIANT,
                       (SELECT distributor_arr FROM sel_filters))
+
+
   );
 
 
@@ -205,8 +208,8 @@ WHERE
 -- ✅ PRIMARY KPI #2 — DAILY NET SALES TREND (MTD)
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND + DISTRIBUTOR
 -- =====================================================================
-SET v_years       = '2025,2026';                -- '2025,2026'
-SET v_months      = 'AUG';               -- 'SEP' | 'SEP,NOV,FEB' | NULL
+SET v_years       = null;                -- '2025,2026'
+SET v_months      = NULL;               -- 'SEP' | 'SEP,NOV,FEB' | NULL
 SET v_region      = NULL;;                -- 'SD,KP'
 SET v_category    = NULL;                -- 'Baby Diapers,Pants'
 SET v_brand       = NULL;                -- 'Bona Plus,Momse'
@@ -297,7 +300,7 @@ mtd_ranges AS (
 SELECT
     v.Posting_Date              AS SALES_DATE,
     DAY(v.Posting_Date)         AS DAY_OF_MONTH,
-    SUM(v.Total_Value)          AS NET_SALES
+    SUM(v.Value)          AS NET_SALES
 FROM gold.zfi_sco_vw v
 WHERE EXISTS (
         SELECT 1 FROM mtd_ranges m
@@ -381,10 +384,10 @@ ORDER BY v.Posting_Date;
 -- ✅ PRIMARY KPI #3 — CATEGORY-WISE NET SALES (MTD)
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND + DISTRIBUTOR
 -- =====================================================================
-SET v_years       = '2026';              -- '2025,2026'
-SET v_months      = 'SEP,NOV,FEB';                -- 'SEP' | 'SEP,NOV,FEB' | NULL
-SET v_region      = 'SD,KP';                -- 'SD,KP'
-SET v_category    = 'Wipes';                -- 'Baby Diapers,Pants'
+SET v_years       = '2027';              -- '2025,2026'
+SET v_months      = 'AUG';                -- 'SEP' | 'SEP,NOV,FEB' | NULL
+SET v_region      = NULL;                -- 'SD,KP'
+SET v_category    = NULL;                -- 'Baby Diapers,Pants'
 SET v_brand       = NULL;                -- 'Bona Plus,Momse'
 SET v_distributor = NULL;                -- '3400091,3400074'
 
@@ -472,8 +475,8 @@ mtd_ranges AS (
 -- ▼ Breakdown SELECT — group by Material_Group_Name across all MTD months/years
 SELECT
     v.Material_Group_Name               AS CATEGORY,
-    SUM(v.Total_Value)                  AS NET_SALES
-    -- SUM(v.Qty_In_Ctn)                 AS VOLUME_CTN,
+    SUM(v.Value)                  AS NET_SALES,
+     SUM(v.Qty_In_Ctn)                 AS VOLUME_CTN
     -- SUM(v.Qty_In_Pcs)                 AS VOLUME_PCS,
     -- COUNT(DISTINCT v.Invoice_No)      AS INVOICE_COUNT
 FROM gold.zfi_sco_vw v
@@ -559,9 +562,9 @@ ORDER BY NET_SALES DESC;
 -- ✅ PRIMARY KPI #4 — TOP N BRANDS (MTD, global across all years)
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND + DISTRIBUTOR
 -- =====================================================================
-SET v_years       = '2026';              -- '2025,2026'
+SET v_years       = '2027';              -- '2025,2026'
 SET v_months      = 'AUG';               -- 'SEP' | 'SEP,NOV,FEB' | NULL
-SET v_region      = 'SD,KP';                -- 'SD,KP'
+SET v_region      = NULL;                -- 'SD,KP'
 SET v_category    = NULL;                -- 'Baby Diapers,Pants'
 SET v_brand       = NULL;                -- 'Bona Plus,Momse'
 SET v_distributor = NULL;                -- '3400091,3400074'
@@ -651,7 +654,7 @@ mtd_ranges AS (
 brand_sales AS (
     SELECT
         v.Brand                                     AS BRAND,
-        SUM(v.Total_Value)                          AS NET_SALES
+        SUM(v.Value)                          AS NET_SALES
         -- SUM(v.Qty_In_Ctn)                        AS VOLUME_CTN,
         -- SUM(v.Qty_In_Pcs)                        AS VOLUME_PCS,
         -- COUNT(DISTINCT v.Invoice_No)             AS INVOICE_COUNT
@@ -748,7 +751,7 @@ LIMIT $top_n;
 -- QUERY 5: FULL FISCAL YEAR MONTHLY TREND (Jul → Jun)
 --          NOTE: only v_year is needed — no v_month for this chart
 -- =====================================================================
-SET v_year          = 2026;        -- Fiscal Year
+SET v_year          = 2027;        -- Fiscal Year
 SET selected_region = NULL;        -- enable later when region mapping is ready
 
 WITH params AS (
@@ -770,7 +773,7 @@ months AS (
 primary_sales AS (
     SELECT
         DATE_TRUNC('month', Posting_Date) AS FY_MONTH_START,
-        SUM(Total_Value)                  AS PRIMARY_SALES_VALUE
+        SUM(Value)                  AS PRIMARY_SALES_VALUE
     FROM gold.zfi_sco_vw
     WHERE Posting_Date >= (SELECT fy_start FROM params)
       AND Posting_Date <  DATEADD('year', 1, (SELECT fy_start FROM params))
