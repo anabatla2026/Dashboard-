@@ -28,17 +28,24 @@ const FISCAL_MONTH_NO_EXPR = `(CASE MONTH
 // Dashboard filter key -> fact-table column(s) to match (OR'd when more than
 // one). segment/appUser are pre-existing filters. `dist` is resolved via
 // withResolvedDist before this map is used.
+//
+// Every text column here is wrapped in UPPER(TRIM(...)) because
+// resolveSecondaryFilters() uppercases user input before it lands here, and
+// Snowflake's default string comparison is case-sensitive — so a bare
+// `CATEGORY IN ('BABY DIAPERS')` never matches fact rows stored as
+// 'Baby Diapers'. This mirrors the pattern already used for PRI_FILTER_COLUMNS
+// and for `dist`. year/month use pre-built expressions and are left alone.
 const COLUMN_MAP = {
   year: [FISCAL_YEAR_EXPR],
   month: ["MONTH"],
-  region: ["REGION"],
-  segment: ["CHANNEL_GROUP"],
-  cat: ["CATEGORY"],
-  brand: ["BRAND"],
-  chType: ["CHANNEL_TYPE"],
-  town: ["TOWN_NAME"],
+  region: ["UPPER(TRIM(REGION))"],
+  segment: ["UPPER(TRIM(CHANNEL_GROUP))"],
+  cat: ["UPPER(TRIM(CATEGORY))"],
+  brand: ["UPPER(TRIM(BRAND))"],
+  chType: ["UPPER(TRIM(CHANNEL_TYPE))"],
+  town: ["UPPER(TRIM(TOWN_NAME))"],
   dist: ["UPPER(TRIM(DISTRIBUTOR_CODE_RD))"],
-  appUser: ["APP_USER_TAGGED_TITLE"],
+  appUser: ["UPPER(TRIM(APP_USER_TAGGED_TITLE))"],
 };
 
 async function resolveSecondaryFilters(filters = {}) {
@@ -117,7 +124,7 @@ export function buildWhere(filters = {}, { skip = [] } = {}) {
     if (key === "appUser") {
       const appUserValues = Array.isArray(values) && values.length > 0 ? values : ["__EXCLUDE_SD__"];
       if (appUserValues.includes("__EXCLUDE_SD__")) {
-        clauses.push("APP_USER_TAGGED_TITLE <> 'SD'");
+        clauses.push("UPPER(TRIM(APP_USER_TAGGED_TITLE)) <> 'SD'");
         continue;
       }
       const perCol = cols.map((c) => `${c} IN (${appUserValues.map(() => "?").join(", ")})`);
