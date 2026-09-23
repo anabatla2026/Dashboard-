@@ -13,8 +13,6 @@
 
 
 
-
-
 -- =====================================================================
 -- ✅ SECONDARY KPI #1 — MTD / FYTD (Sales Value + CTN + PCS)
 -- ADJUSTED VERSION: adds MT-Direct distributor primary sales top-up
@@ -24,27 +22,28 @@
 --     = SUM(net_sales) FROM Gold.salesflo_datadump_vw (excl. APP_USER_TAGGED_TITLE = 'SD')
 --     + SUM(Value)     FROM gold.zfi_sco_vw for distributors listed in
 --                       GOLD.MT_DIRECT_DISTRIBUTORS_VW
---       (these distributors' primary sales ARE their secondary sales,
---        since salesflo does not capture them — or under-captures them)
 --
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
---                             + APP_USER_TAG  ✅ NEW
--- NOTE: CHANNEL_TYPE and TOWN have no equivalent in zfi_sco_vw (primary),
---       so they are applied to the secondary component only.
--- NOTE: APP_USER_TAG is secondary-only (no equivalent in zfi_sco_vw).
---       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
+--                             + APP_USER_TAG
+--
+-- ✅ FIX: NOT EXISTS bypass removed. Ab har side apni mapping table
+--         (IN_PRIMARY vs IN_SECONDARY) se EXISTS + direct match karti hai.
+--         Case A: sirf secondary  -> secondary aaye, primary 0
+--         Case B: sirf primary    -> secondary 0, primary aaye
+--         Case C: dono            -> dono aayein (no double count, kyunki
+--                                    MT-Direct secondary se excluded hai)
 -- =====================================================================
 
-SET v_years        = '2027';             -- '2025,2026'
-SET v_months       = 'AUG';             -- 'SEP' | 'SEP,NOV,FEB' | NULL
-SET v_region       = NULL;             -- 'SD,KP'
-SET v_category     = NULL;--'Baby Diapers';             -- 'Baby Diapers,Pants'
-SET v_brand        = NULL;             -- 'Bona Plus,Momse'
-SET v_channel_type = NULL;             -- 'Wholesale,GT,MT'
-SET v_town         = NULL;             -- 'Bhawalpur,Lahore'
-SET v_distributor  = NULL;             -- 'D0458,D0459'
-SET v_app_user_tag = 'MDSD,OB,SD - OB';             -- 'SD,ABC' | NULL (default: exclude SD)
+SET v_years        = '2027';
+SET v_months       = 'AUG';
+SET v_region       = NULL;
+SET v_category     = 'Baby Diapers';
+SET v_brand        = NULL;
+SET v_channel_type = NULL;
+SET v_town         = NULL;
+SET v_distributor  = NULL;
+SET v_app_user_tag = 'MDSD,OB,SD - OB';
 
 WITH params AS (
     SELECT
@@ -64,7 +63,7 @@ WITH params AS (
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
         NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
-        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw
 ),
 sel_filters AS (
     SELECT p.*,
@@ -86,7 +85,6 @@ sel_filters AS (
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
         END AS distributor_arr,
-        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
         CASE
             WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
             ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
@@ -159,12 +157,16 @@ mtd_ranges AS (
          LATERAL FLATTEN(input => r.eff_years) y,
          LATERAL FLATTEN(input => r.mtd_month_nos) m
 ),
--- ✅ NEW: list of MT-direct distributor codes
 mt_direct_codes AS (
     SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) AS DISTRIBUTOR_CODE
     FROM GOLD.MT_DIRECT_DISTRIBUTORS_VW
 ),
--- ✅ NEW: primary sales top-up for MT-direct distributors, MTD
+
+-- =====================================================================
+-- ✅ PRIMARY TOP-UP (MT-Direct only) — MTD
+--    Case B & C handle: sirf tab aayega jab category IN_PRIMARY = 1 ho
+--                       aur row se genuinely match kare.
+-- =====================================================================
 primary_topup_mtd AS (
     SELECT
         SUM(v.Value)       AS TOPUP_SALES_VALUE,
@@ -173,69 +175,61 @@ primary_topup_mtd AS (
     FROM gold.zfi_sco_vw v
     WHERE EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.invoice_Date BETWEEN m.m_start AND m.m_end)
       AND UPPER(TRIM(v.PARTY_CODE)) IN (SELECT DISTRIBUTOR_CODE FROM mt_direct_codes)
-      -- ✅ Conditional REGION (MULTI)
+
+      -- ✅ REGION (primary) — EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH
-                WHERE SOURCE = 'PRIMARY'
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(REGION_CODE))::VARIANT,
-                                      (SELECT region_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(REGION_NAME))::VARIANT,
-                                         (SELECT region_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH rm
+                WHERE rm.SOURCE = 'PRIMARY'
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_CODE))::VARIANT, (SELECT region_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_NAME))::VARIANT, (SELECT region_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(rm.REGION_CODE)) = UPPER(TRIM(v.REGION))
+                       OR UPPER(TRIM(rm.REGION_NAME)) = UPPER(TRIM(v.REGION_NAME)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION_NAME))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
           )
-      -- ✅ Conditional CATEGORY (MULTI)
+
+      -- ✅ CATEGORY (primary) — IN_PRIMARY = 1, EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH
-                WHERE IN_PRIMARY = 1
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_NAME))::VARIANT,
-                                      (SELECT category_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_CODE))::VARIANT,
-                                         (SELECT category_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH cm
+                WHERE cm.IN_PRIMARY = 1
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_NAME))::VARIANT, (SELECT category_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_CODE))::VARIANT, (SELECT category_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(cm.CATEGORY_NAME)) = UPPER(TRIM(v.MATERIAL_GROUP_NAME))
+                       OR UPPER(TRIM(cm.CATEGORY_CODE)) = UPPER(TRIM(v.MATERIAL_GROUP)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.MATERIAL_GROUP))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.MATERIAL_GROUP_NAME))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
           )
-      -- ✅ Conditional BRAND (MULTI)
+
+      -- ✅ BRAND (primary) — IN_PRIMARY = 1, EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT brand_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH
-                WHERE IN_PRIMARY = 1
-                  AND ARRAY_CONTAINS(UPPER(TRIM(BRAND))::VARIANT,
-                                     (SELECT brand_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH bm
+                WHERE bm.IN_PRIMARY = 1
+                  AND ARRAY_CONTAINS(UPPER(TRIM(bm.BRAND))::VARIANT, (SELECT brand_arr FROM sel_filters))
+                  AND UPPER(TRIM(bm.BRAND)) = UPPER(TRIM(v.BRAND))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
-                              (SELECT brand_arr FROM sel_filters))
           )
-      -- ✅ Conditional DISTRIBUTOR (MULTI)
+
+      -- ✅ DISTRIBUTOR (primary) — EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH
-                WHERE ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_NAME))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH df
+                WHERE (ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_NAME))::VARIANT, (SELECT distributor_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.PARTY_CODE))
+                       OR UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.SHIP_TO_PARTY)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.PARTY_CODE))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.SHIP_TO_PARTY))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
           )
 ),
--- ✅ NEW: primary sales top-up for MT-direct distributors, FYTD
+
+-- =====================================================================
+-- ✅ PRIMARY TOP-UP (MT-Direct only) — FYTD
+-- =====================================================================
 primary_topup_fytd AS (
     SELECT
         SUM(v.Value)       AS TOPUP_SALES_VALUE,
@@ -244,69 +238,64 @@ primary_topup_fytd AS (
     FROM gold.zfi_sco_vw v
     WHERE EXISTS (SELECT 1 FROM fy_ranges f WHERE v.invoice_Date BETWEEN f.fy_start AND f.fytd_end)
       AND UPPER(TRIM(v.PARTY_CODE)) IN (SELECT DISTRIBUTOR_CODE FROM mt_direct_codes)
-      -- ✅ Conditional REGION (MULTI)
+
+      -- ✅ REGION (primary)
       AND (
             ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH
-                WHERE SOURCE = 'PRIMARY'
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(REGION_CODE))::VARIANT,
-                                      (SELECT region_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(REGION_NAME))::VARIANT,
-                                         (SELECT region_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH rm
+                WHERE rm.SOURCE = 'PRIMARY'
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_CODE))::VARIANT, (SELECT region_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_NAME))::VARIANT, (SELECT region_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(rm.REGION_CODE)) = UPPER(TRIM(v.REGION))
+                       OR UPPER(TRIM(rm.REGION_NAME)) = UPPER(TRIM(v.REGION_NAME)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION_NAME))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
           )
-      -- ✅ Conditional CATEGORY (MULTI)
+
+      -- ✅ CATEGORY (primary) — IN_PRIMARY = 1
       AND (
             ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH
-                WHERE IN_PRIMARY = 1
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_NAME))::VARIANT,
-                                      (SELECT category_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_CODE))::VARIANT,
-                                         (SELECT category_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH cm
+                WHERE cm.IN_PRIMARY = 1
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_NAME))::VARIANT, (SELECT category_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_CODE))::VARIANT, (SELECT category_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(cm.CATEGORY_NAME)) = UPPER(TRIM(v.MATERIAL_GROUP_NAME))
+                       OR UPPER(TRIM(cm.CATEGORY_CODE)) = UPPER(TRIM(v.MATERIAL_GROUP)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.MATERIAL_GROUP))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.MATERIAL_GROUP_NAME))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
           )
-      -- ✅ Conditional BRAND (MULTI)
+
+      -- ✅ BRAND (primary) — IN_PRIMARY = 1
       AND (
             ARRAY_SIZE((SELECT brand_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH
-                WHERE IN_PRIMARY = 1
-                  AND ARRAY_CONTAINS(UPPER(TRIM(BRAND))::VARIANT,
-                                     (SELECT brand_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH bm
+                WHERE bm.IN_PRIMARY = 1
+                  AND ARRAY_CONTAINS(UPPER(TRIM(bm.BRAND))::VARIANT, (SELECT brand_arr FROM sel_filters))
+                  AND UPPER(TRIM(bm.BRAND)) = UPPER(TRIM(v.BRAND))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
-                              (SELECT brand_arr FROM sel_filters))
           )
-      -- ✅ Conditional DISTRIBUTOR (MULTI)
+
+      -- ✅ DISTRIBUTOR (primary)
       AND (
             ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH
-                WHERE ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_NAME))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH df
+                WHERE (ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_NAME))::VARIANT, (SELECT distributor_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.PARTY_CODE))
+                       OR UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.SHIP_TO_PARTY)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.PARTY_CODE))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.SHIP_TO_PARTY))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
           )
 ),
--- ✅ Original secondary aggregate (unchanged logic), isolated into its own CTE
+
+-- =====================================================================
+-- ✅ SECONDARY AGGREGATE (salesflo)
+--    Case A & C handle: sirf tab aayega jab category IN_SECONDARY = 1 ho
+--    aur row se genuinely match kare.
+--    MT-Direct distributors EXCLUDE (double count se bachne ke liye).
+-- =====================================================================
 secondary_agg AS (
     SELECT
         SUM(CASE WHEN EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end)
@@ -323,81 +312,77 @@ secondary_agg AS (
                  THEN v.SALES_UNITS END)            AS FYTD_VOLUME_PCS
     FROM Gold.salesflo_datadump_vw v
     WHERE
-        -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+        -- ✅ APP_USER_TAG (secondary-only, default excludes SD)
         CASE
-            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
-                                (SELECT app_user_tag_arr FROM sel_filters))
+            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
                 THEN v.APP_USER_TAGGED_TITLE <> 'SD'
-            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
-                                (SELECT app_user_tag_arr FROM sel_filters))
+            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
         END
-      -- ✅ Conditional REGION (MULTI)
-      AND (
+
+        -- ✅ MT-Direct distributors ko secondary se EXCLUDE karo
+        --    (warna Case C mein double counting hogi)
+        AND UPPER(TRIM(v.DISTRIBUTOR_CODE_RD)) NOT IN (SELECT DISTRIBUTOR_CODE FROM mt_direct_codes)
+
+        -- ✅ REGION (secondary) — EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH
-                WHERE SOURCE = 'SECONDARY'
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(REGION_CODE))::VARIANT,
-                                      (SELECT region_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(REGION_NAME))::VARIANT,
-                                         (SELECT region_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH rm
+                WHERE rm.SOURCE = 'SECONDARY'
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_CODE))::VARIANT, (SELECT region_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_NAME))::VARIANT, (SELECT region_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(rm.REGION_CODE)) = UPPER(TRIM(v.REGION))
+                       OR UPPER(TRIM(rm.REGION_NAME)) = UPPER(TRIM(v.REGION)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
-          )
-      -- ✅ Conditional CATEGORY (MULTI)
-      AND (
+        )
+
+        -- ✅ CATEGORY (secondary) — IN_SECONDARY = 1, EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH
-                WHERE IN_SECONDARY = 1
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_NAME))::VARIANT,
-                                      (SELECT category_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_CODE))::VARIANT,
-                                         (SELECT category_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH cm
+                WHERE cm.IN_SECONDARY = 1
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_NAME))::VARIANT, (SELECT category_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_CODE))::VARIANT, (SELECT category_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(cm.CATEGORY_NAME)) = UPPER(TRIM(v.CATEGORY))
+                       OR UPPER(TRIM(cm.CATEGORY_CODE)) = UPPER(TRIM(v.CATEGORY)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.CATEGORY))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
-          )
-      -- ✅ Conditional BRAND (MULTI)
-      AND (
+        )
+
+        -- ✅ BRAND (secondary) — IN_SECONDARY = 1
+        AND (
             ARRAY_SIZE((SELECT brand_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH
-                WHERE IN_SECONDARY = 1
-                  AND ARRAY_CONTAINS(UPPER(TRIM(BRAND))::VARIANT,
-                                     (SELECT brand_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH bm
+                WHERE bm.IN_SECONDARY = 1
+                  AND ARRAY_CONTAINS(UPPER(TRIM(bm.BRAND))::VARIANT, (SELECT brand_arr FROM sel_filters))
+                  AND UPPER(TRIM(bm.BRAND)) = UPPER(TRIM(v.BRAND))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
-                              (SELECT brand_arr FROM sel_filters))
-          )
-      -- ✅ CHANNEL_TYPE (Secondary-only — MULTI)
-      AND (
+        )
+
+        -- ✅ CHANNEL_TYPE (secondary-only — MULTI)
+        AND (
             ARRAY_SIZE((SELECT channel_type_arr FROM sel_filters)) = 0
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT,
-                              (SELECT channel_type_arr FROM sel_filters))
-          )
-      -- ✅ TOWN (Secondary-only — MULTI)
-      AND (
+            OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT, (SELECT channel_type_arr FROM sel_filters))
+        )
+
+        -- ✅ TOWN (secondary-only — MULTI)
+        AND (
             ARRAY_SIZE((SELECT town_arr FROM sel_filters)) = 0
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT,
-                              (SELECT town_arr FROM sel_filters))
-          )
-      -- ✅ Conditional DISTRIBUTOR (MULTI)
-      AND (
+            OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT, (SELECT town_arr FROM sel_filters))
+        )
+
+        -- ✅ DISTRIBUTOR (secondary) — EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH
-                WHERE ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_NAME))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH df
+                WHERE (ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_NAME))::VARIANT, (SELECT distributor_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.DISTRIBUTOR_CODE_RD)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.DISTRIBUTOR_CODE_RD))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
-          )
+        )
 )
 -- ✅ FINAL: secondary + MT-direct primary top-up
 SELECT
@@ -421,28 +406,24 @@ CROSS JOIN primary_topup_fytd tf;
 
 
 
-
-
-
-
-
 -- =====================================================================
 -- ✅ SECONDARY KPI #2 — MTD / FYTD PRODUCTIVE STORES & DISTRIBUTORS
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
---                             + APP_USER_TAG  ✅ NEW
--- NOTE: APP_USER_TAG is secondary-only.
---       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
+--                             + APP_USER_TAG
+--
+-- ✅ FIX: NOT EXISTS bypass removed. Ab har IN_SECONDARY filter
+--         EXISTS + direct match karta hai.
 -- =====================================================================
-SET v_years        = '2026';             -- '2025,2026'
-SET v_months       = 'NOV,FEB';          -- 'SEP' | 'SEP,NOV,FEB' | NULL
-SET v_region       = NULL;               -- 'SD,KP'
-SET v_category     = NULL;               -- 'Baby Diapers,Pants'
-SET v_brand        = NULL;               -- 'Bona Plus,Momse'
-SET v_channel_type = NULL;               -- 'MT,GT'
-SET v_town         = NULL;               -- 'Karachi,Lahore'
-SET v_distributor  = NULL;               -- 'D0458,D0459'
-SET v_app_user_tag = NULL;               -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
+SET v_years        = '2026';
+SET v_months       = 'NOV,FEB';
+SET v_region       = NULL;
+SET v_category     = NULL;
+SET v_brand        = NULL;
+SET v_channel_type = NULL;
+SET v_town         = NULL;
+SET v_distributor  = NULL;
+SET v_app_user_tag = NULL;
 
 WITH params AS (
     SELECT
@@ -462,9 +443,8 @@ WITH params AS (
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
         NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
-        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw
 ),
--- ✅ Build arrays for ALL filters (multi-select support)
 sel_filters AS (
     SELECT p.*,
         CASE WHEN p.region_raw IS NULL THEN ARRAY_CONSTRUCT()
@@ -485,7 +465,6 @@ sel_filters AS (
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
         END AS distributor_arr,
-        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
         CASE
             WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
             ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
@@ -584,89 +563,73 @@ SELECT
     END)                                            AS FYTD_PRODUCTIVE_DISTRIBUTOR
 FROM Gold.salesflo_datadump_vw v
 WHERE
-    -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+    -- ✅ APP_USER_TAG (secondary-only, default excludes SD)
     CASE
-        WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
-                            (SELECT app_user_tag_arr FROM sel_filters))
+        WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
             THEN v.APP_USER_TAGGED_TITLE <> 'SD'
-        ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
-                            (SELECT app_user_tag_arr FROM sel_filters))
+        ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
     END
-  -- ✅ Conditional REGION (MULTI)
-  AND (
+
+    -- ✅ REGION (secondary) — EXISTS + direct match
+    AND (
         ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
-        OR NOT EXISTS (
-            SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH
-            WHERE SOURCE = 'SECONDARY'
-              AND (ARRAY_CONTAINS(UPPER(TRIM(REGION_CODE))::VARIANT,
-                                  (SELECT region_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(REGION_NAME))::VARIANT,
-                                     (SELECT region_arr FROM sel_filters)))
+        OR EXISTS (
+            SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH rm
+            WHERE rm.SOURCE = 'SECONDARY'
+              AND (ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_CODE))::VARIANT, (SELECT region_arr FROM sel_filters))
+                   OR ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_NAME))::VARIANT, (SELECT region_arr FROM sel_filters)))
+              AND (UPPER(TRIM(rm.REGION_CODE)) = UPPER(TRIM(v.REGION))
+                   OR UPPER(TRIM(rm.REGION_NAME)) = UPPER(TRIM(v.REGION)))
         )
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION))::VARIANT,
-                          (SELECT region_arr FROM sel_filters))
-      )
-  -- ✅ Conditional CATEGORY (MULTI)
-  AND (
+    )
+
+    -- ✅ CATEGORY (secondary) — IN_SECONDARY = 1, EXISTS + direct match
+    AND (
         ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
-        OR NOT EXISTS (
-            SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH
-            WHERE IN_SECONDARY = 1
-              AND (ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_NAME))::VARIANT,
-                                  (SELECT category_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_CODE))::VARIANT,
-                                     (SELECT category_arr FROM sel_filters)))
+        OR EXISTS (
+            SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH cm
+            WHERE cm.IN_SECONDARY = 1
+              AND (ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_NAME))::VARIANT, (SELECT category_arr FROM sel_filters))
+                   OR ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_CODE))::VARIANT, (SELECT category_arr FROM sel_filters)))
+              AND (UPPER(TRIM(cm.CATEGORY_NAME)) = UPPER(TRIM(v.CATEGORY))
+                   OR UPPER(TRIM(cm.CATEGORY_CODE)) = UPPER(TRIM(v.CATEGORY)))
         )
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.CATEGORY))::VARIANT,
-                          (SELECT category_arr FROM sel_filters))
-      )
-  -- ✅ Conditional BRAND (MULTI)
-  AND (
+    )
+
+    -- ✅ BRAND (secondary) — IN_SECONDARY = 1, EXISTS + direct match
+    AND (
         ARRAY_SIZE((SELECT brand_arr FROM sel_filters)) = 0
-        OR NOT EXISTS (
-            SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH
-            WHERE IN_SECONDARY = 1
-              AND ARRAY_CONTAINS(UPPER(TRIM(BRAND))::VARIANT,
-                                 (SELECT brand_arr FROM sel_filters))
+        OR EXISTS (
+            SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH bm
+            WHERE bm.IN_SECONDARY = 1
+              AND ARRAY_CONTAINS(UPPER(TRIM(bm.BRAND))::VARIANT, (SELECT brand_arr FROM sel_filters))
+              AND UPPER(TRIM(bm.BRAND)) = UPPER(TRIM(v.BRAND))
         )
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
-                          (SELECT brand_arr FROM sel_filters))
-      )
-  -- ✅ CHANNEL_TYPE (Secondary-only — MULTI)
-  AND (
+    )
+
+    -- ✅ CHANNEL_TYPE (secondary-only — MULTI)
+    AND (
         ARRAY_SIZE((SELECT channel_type_arr FROM sel_filters)) = 0
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT,
-                          (SELECT channel_type_arr FROM sel_filters))
-      )
-  -- ✅ TOWN (Secondary-only — MULTI)
-  AND (
+        OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT, (SELECT channel_type_arr FROM sel_filters))
+    )
+
+    -- ✅ TOWN (secondary-only — MULTI)
+    AND (
         ARRAY_SIZE((SELECT town_arr FROM sel_filters)) = 0
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT,
-                          (SELECT town_arr FROM sel_filters))
-      )
-  -- ✅ Conditional DISTRIBUTOR (MULTI)
-  AND (
+        OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT, (SELECT town_arr FROM sel_filters))
+    )
+
+    -- ✅ DISTRIBUTOR (secondary) — EXISTS + direct match
+    AND (
         ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
-        OR NOT EXISTS (
-            SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH
-            WHERE ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_CODE))::VARIANT,
-                                 (SELECT distributor_arr FROM sel_filters))
-               OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_CODE))::VARIANT,
-                                 (SELECT distributor_arr FROM sel_filters))
-               OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_NAME))::VARIANT,
-                                 (SELECT distributor_arr FROM sel_filters))
+        OR EXISTS (
+            SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH df
+            WHERE (ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                   OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                   OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_NAME))::VARIANT, (SELECT distributor_arr FROM sel_filters)))
+              AND UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.DISTRIBUTOR_CODE))
         )
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.DISTRIBUTOR_CODE))::VARIANT,
-                          (SELECT distributor_arr FROM sel_filters))
-      );
-
-
-
-
-
-
-
-
+    );
 
 
 
@@ -688,22 +651,22 @@ WHERE
 --
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
---                             + APP_USER_TAG  ✅ NEW
--- NOTE: CHANNEL_TYPE and TOWN have no equivalent in zfi_sco_vw (primary),
---       so they are applied to the secondary component only.
--- NOTE: APP_USER_TAG is secondary-only.
---       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
+--                             + APP_USER_TAG
+--
+-- ✅ FIX: NOT EXISTS bypass removed. Ab har IN_SECONDARY / IN_PRIMARY
+--         filter EXISTS + direct match karta hai.
+--         Secondary se MT-Direct distributors EXCLUDE (no double count).
 -- =====================================================================
 
-SET v_years        = '2027';        -- '2025,2026'
-SET v_months       = 'AUG';        -- 'SEP' | 'SEP,NOV,FEB' | NULL
-SET v_region       = NULL;        -- 'SD,KP'
-SET v_category     = NULL;        -- 'Baby Diapers,Pants'
-SET v_brand        = NULL;        -- 'Bona Plus,Momse'
-SET v_channel_type = NULL;        -- 'MT,GT'
-SET v_town         = NULL;        -- 'Karachi,Lahore'
-SET v_distributor  = NULL;        -- 'D0458,D0459'
-SET v_app_user_tag = NULL;        -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
+SET v_years        = '2027';
+SET v_months       = 'AUG';
+SET v_region       = NULL;
+SET v_category     = NULL;
+SET v_brand        = NULL;
+SET v_channel_type = NULL;
+SET v_town         = NULL;
+SET v_distributor  = NULL;
+SET v_app_user_tag = NULL;
 
 WITH params AS (
     SELECT
@@ -723,9 +686,8 @@ WITH params AS (
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
         NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
-        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw
 ),
--- ✅ Build arrays for ALL filters (multi-select support)
 sel_filters AS (
     SELECT p.*,
         CASE WHEN p.region_raw IS NULL THEN ARRAY_CONSTRUCT()
@@ -746,7 +708,6 @@ sel_filters AS (
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
         END AS distributor_arr,
-        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
         CASE
             WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
             ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
@@ -777,7 +738,6 @@ resolved AS (
     SELECT sm.*,
         CASE WHEN ARRAY_SIZE(sm.year_arr) = 0 THEN ARRAY_CONSTRUCT(sm.current_fy)
              ELSE sm.year_arr END AS eff_years,
-        -- MTD months only — KPI #3 doesn't need FYTD
         CASE
             WHEN ARRAY_SIZE(sm.month_no_arr) = 0 THEN ARRAY_CONSTRUCT(sm.current_fy_month_no)
             ELSE sm.month_no_arr
@@ -800,173 +760,160 @@ mtd_ranges AS (
          LATERAL FLATTEN(input => r.eff_years) y,
          LATERAL FLATTEN(input => r.mtd_month_nos) m
 ),
--- ✅ NEW: list of MT-direct distributor codes
 mt_direct_codes AS (
     SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) AS DISTRIBUTOR_CODE
     FROM GOLD.MT_DIRECT_DISTRIBUTORS_VW
 ),
--- ✅ NEW: secondary daily trend (grouped by DATE)
+
+-- =====================================================================
+-- ✅ SECONDARY DAILY (salesflo) — MT-Direct EXCLUDE
+--    Case A & C handle: sirf tab aayega jab category IN_SECONDARY = 1
+-- =====================================================================
 secondary_daily AS (
     SELECT
         v.DATE                      AS SALES_DATE,
         SUM(v.NET_SALES)            AS NET_SALES
     FROM Gold.salesflo_datadump_vw v
     WHERE
-        -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+        -- ✅ APP_USER_TAG (secondary-only, default excludes SD)
         CASE
-            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
-                                (SELECT app_user_tag_arr FROM sel_filters))
+            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
                 THEN v.APP_USER_TAGGED_TITLE <> 'SD'
-            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
-                                (SELECT app_user_tag_arr FROM sel_filters))
+            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
         END
-      AND EXISTS (
-            SELECT 1 FROM mtd_ranges m
-            WHERE v.DATE BETWEEN m.m_start AND m.m_end
-          )
-      -- ✅ Conditional REGION (MULTI)
-      AND (
+
+        AND EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end)
+
+        -- ✅ MT-Direct distributors EXCLUDE (no double count)
+        AND UPPER(TRIM(v.DISTRIBUTOR_CODE_RD)) NOT IN (SELECT DISTRIBUTOR_CODE FROM mt_direct_codes)
+
+        -- ✅ REGION (secondary) — EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH
-                WHERE SOURCE = 'SECONDARY'
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(REGION_CODE))::VARIANT,
-                                      (SELECT region_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(REGION_NAME))::VARIANT,
-                                         (SELECT region_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH rm
+                WHERE rm.SOURCE = 'SECONDARY'
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_CODE))::VARIANT, (SELECT region_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_NAME))::VARIANT, (SELECT region_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(rm.REGION_CODE)) = UPPER(TRIM(v.REGION))
+                       OR UPPER(TRIM(rm.REGION_NAME)) = UPPER(TRIM(v.REGION)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
-          )
-      -- ✅ Conditional CATEGORY (MULTI)
-      AND (
+        )
+
+        -- ✅ CATEGORY (secondary) — IN_SECONDARY = 1, EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH
-                WHERE IN_SECONDARY = 1
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_NAME))::VARIANT,
-                                      (SELECT category_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_CODE))::VARIANT,
-                                         (SELECT category_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH cm
+                WHERE cm.IN_SECONDARY = 1
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_NAME))::VARIANT, (SELECT category_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_CODE))::VARIANT, (SELECT category_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(cm.CATEGORY_NAME)) = UPPER(TRIM(v.CATEGORY))
+                       OR UPPER(TRIM(cm.CATEGORY_CODE)) = UPPER(TRIM(v.CATEGORY)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.CATEGORY))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
-          )
-      -- ✅ Conditional BRAND (MULTI)
-      AND (
+        )
+
+        -- ✅ BRAND (secondary) — IN_SECONDARY = 1, EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT brand_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH
-                WHERE IN_SECONDARY = 1
-                  AND ARRAY_CONTAINS(UPPER(TRIM(BRAND))::VARIANT,
-                                     (SELECT brand_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH bm
+                WHERE bm.IN_SECONDARY = 1
+                  AND ARRAY_CONTAINS(UPPER(TRIM(bm.BRAND))::VARIANT, (SELECT brand_arr FROM sel_filters))
+                  AND UPPER(TRIM(bm.BRAND)) = UPPER(TRIM(v.BRAND))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
-                              (SELECT brand_arr FROM sel_filters))
-          )
-      -- ✅ CHANNEL_TYPE (Secondary-only — MULTI)
-      AND (
+        )
+
+        -- ✅ CHANNEL_TYPE (secondary-only — MULTI)
+        AND (
             ARRAY_SIZE((SELECT channel_type_arr FROM sel_filters)) = 0
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT,
-                              (SELECT channel_type_arr FROM sel_filters))
-          )
-      -- ✅ TOWN (Secondary-only — MULTI)
-      AND (
+            OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT, (SELECT channel_type_arr FROM sel_filters))
+        )
+
+        -- ✅ TOWN (secondary-only — MULTI)
+        AND (
             ARRAY_SIZE((SELECT town_arr FROM sel_filters)) = 0
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT,
-                              (SELECT town_arr FROM sel_filters))
-          )
-      -- ✅ Conditional DISTRIBUTOR (MULTI)
-      AND (
+            OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT, (SELECT town_arr FROM sel_filters))
+        )
+
+        -- ✅ DISTRIBUTOR (secondary) — EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH
-                WHERE ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_NAME))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH df
+                WHERE (ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_NAME))::VARIANT, (SELECT distributor_arr FROM sel_filters)))
+                  AND UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.DISTRIBUTOR_CODE_RD))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.DISTRIBUTOR_CODE_RD))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
-          )
+        )
     GROUP BY v.DATE
 ),
--- ✅ NEW: primary daily trend for MT-direct distributors only (grouped by invoice_Date)
+
+-- =====================================================================
+-- ✅ PRIMARY DAILY (zfi_sco, MT-Direct only)
+--    Case B & C handle: sirf tab aayega jab category IN_PRIMARY = 1
+-- =====================================================================
 primary_daily AS (
     SELECT
         v.invoice_Date              AS SALES_DATE,
         SUM(v.Value)                AS NET_SALES
     FROM gold.zfi_sco_vw v
-    WHERE EXISTS (
-            SELECT 1 FROM mtd_ranges m
-            WHERE v.invoice_Date BETWEEN m.m_start AND m.m_end
-          )
+    WHERE EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.invoice_Date BETWEEN m.m_start AND m.m_end)
       AND UPPER(TRIM(v.PARTY_CODE)) IN (SELECT DISTRIBUTOR_CODE FROM mt_direct_codes)
-      -- ✅ Conditional REGION (MULTI)
+
+      -- ✅ REGION (primary) — EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH
-                WHERE SOURCE = 'PRIMARY'
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(REGION_CODE))::VARIANT,
-                                      (SELECT region_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(REGION_NAME))::VARIANT,
-                                         (SELECT region_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH rm
+                WHERE rm.SOURCE = 'PRIMARY'
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_CODE))::VARIANT, (SELECT region_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_NAME))::VARIANT, (SELECT region_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(rm.REGION_CODE)) = UPPER(TRIM(v.REGION))
+                       OR UPPER(TRIM(rm.REGION_NAME)) = UPPER(TRIM(v.REGION_NAME)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION_NAME))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
           )
-      -- ✅ Conditional CATEGORY (MULTI)
+
+      -- ✅ CATEGORY (primary) — IN_PRIMARY = 1, EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH
-                WHERE IN_PRIMARY = 1
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_NAME))::VARIANT,
-                                      (SELECT category_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_CODE))::VARIANT,
-                                         (SELECT category_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH cm
+                WHERE cm.IN_PRIMARY = 1
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_NAME))::VARIANT, (SELECT category_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_CODE))::VARIANT, (SELECT category_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(cm.CATEGORY_NAME)) = UPPER(TRIM(v.MATERIAL_GROUP_NAME))
+                       OR UPPER(TRIM(cm.CATEGORY_CODE)) = UPPER(TRIM(v.MATERIAL_GROUP)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.MATERIAL_GROUP))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.MATERIAL_GROUP_NAME))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
           )
-      -- ✅ Conditional BRAND (MULTI)
+
+      -- ✅ BRAND (primary) — IN_PRIMARY = 1, EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT brand_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH
-                WHERE IN_PRIMARY = 1
-                  AND ARRAY_CONTAINS(UPPER(TRIM(BRAND))::VARIANT,
-                                     (SELECT brand_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH bm
+                WHERE bm.IN_PRIMARY = 1
+                  AND ARRAY_CONTAINS(UPPER(TRIM(bm.BRAND))::VARIANT, (SELECT brand_arr FROM sel_filters))
+                  AND UPPER(TRIM(bm.BRAND)) = UPPER(TRIM(v.BRAND))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
-                              (SELECT brand_arr FROM sel_filters))
           )
-      -- ✅ Conditional DISTRIBUTOR (MULTI)
+
+      -- ✅ DISTRIBUTOR (primary) — EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH
-                WHERE ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_NAME))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH df
+                WHERE (ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_NAME))::VARIANT, (SELECT distributor_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.PARTY_CODE))
+                       OR UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.SHIP_TO_PARTY)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.PARTY_CODE))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.SHIP_TO_PARTY))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
           )
     GROUP BY v.invoice_Date
 )
+
 -- ✅ FINAL: union secondary + MT-direct primary daily, re-aggregate by date
 SELECT
     SALES_DATE,
@@ -988,28 +935,24 @@ ORDER BY SALES_DATE;
 
 
 
-
-
-
-
-
 -- =====================================================================
 -- ✅ SECONDARY KPI #4 — SALES VALUE BY CHANNEL TYPE (MTD)
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
---                             + APP_USER_TAG  ✅ NEW
--- NOTE: APP_USER_TAG is secondary-only.
---       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
+--                             + APP_USER_TAG
+--
+-- ✅ FIX: NOT EXISTS bypass removed. Ab har IN_SECONDARY filter
+--         EXISTS + direct match karta hai.
 -- =====================================================================
-SET v_years        = '2024,2025';             -- '2025,2026'
-SET v_months       = NULL;          -- 'SEP' | 'SEP,NOV,FEB' | NULL
-SET v_region       = 'Karachi Total,PB,Peshawar Region';               -- 'SD,KP'
-SET v_category     = 'AP006,Pants,Oral Care';               -- 'Baby Diapers,Pants'
-SET v_brand        = NULL;               -- 'Bona Plus,Momse'
-SET v_channel_type = NULL;               -- 'MT,GT'
-SET v_town         = NULL;               -- 'Karachi,Lahore'
-SET v_distributor  = NULL;               -- 'D0458,D0459'
-SET v_app_user_tag = NULL;               -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
+SET v_years        = '2024,2025';
+SET v_months       = NULL;
+SET v_region       = 'Karachi Total,PB,Peshawar Region';
+SET v_category     = 'AP006,Pants,Oral Care';
+SET v_brand        = NULL;
+SET v_channel_type = NULL;
+SET v_town         = NULL;
+SET v_distributor  = NULL;
+SET v_app_user_tag = NULL;
 
 WITH params AS (
     SELECT
@@ -1029,9 +972,8 @@ WITH params AS (
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
         NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
-        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw
 ),
--- ✅ Build arrays for ALL filters (multi-select support)
 sel_filters AS (
     SELECT p.*,
         CASE WHEN p.region_raw IS NULL THEN ARRAY_CONSTRUCT()
@@ -1052,7 +994,6 @@ sel_filters AS (
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
         END AS distributor_arr,
-        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
         CASE
             WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
             ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
@@ -1083,7 +1024,6 @@ resolved AS (
     SELECT sm.*,
         CASE WHEN ARRAY_SIZE(sm.year_arr) = 0 THEN ARRAY_CONSTRUCT(sm.current_fy)
              ELSE sm.year_arr END AS eff_years,
-        -- MTD months only
         CASE
             WHEN ARRAY_SIZE(sm.month_no_arr) = 0 THEN ARRAY_CONSTRUCT(sm.current_fy_month_no)
             ELSE sm.month_no_arr
@@ -1110,95 +1050,79 @@ mtd_ranges AS (
 SELECT
     v.CHANNEL_TYPE,
     SUM(v.NET_SALES)                     AS SALES_VALUE
-    -- SUM(v.SALES_CTN)                     AS VOLUME_CTN,
-    -- SUM(v.SALES_UNITS)                   AS VOLUME_PCS,
-    -- COUNT(DISTINCT TRIM(v.OUTLET_CODE))  AS PRODUCTIVE_STORES
 FROM Gold.salesflo_datadump_vw v
 WHERE
-    -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+    -- ✅ APP_USER_TAG (secondary-only, default excludes SD)
     CASE
-        WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
-                            (SELECT app_user_tag_arr FROM sel_filters))
+        WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
             THEN v.APP_USER_TAGGED_TITLE <> 'SD'
-        ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
-                            (SELECT app_user_tag_arr FROM sel_filters))
+        ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
     END
-  AND EXISTS (
-        SELECT 1 FROM mtd_ranges m
-        WHERE v.DATE BETWEEN m.m_start AND m.m_end
-      )
-  -- ✅ Conditional REGION (MULTI)
-  AND (
+
+    AND EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end)
+
+    -- ✅ REGION (secondary) — EXISTS + direct match
+    AND (
         ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
-        OR NOT EXISTS (
-            SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH
-            WHERE SOURCE = 'SECONDARY'
-              AND (ARRAY_CONTAINS(UPPER(TRIM(REGION_CODE))::VARIANT,
-                                  (SELECT region_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(REGION_NAME))::VARIANT,
-                                     (SELECT region_arr FROM sel_filters)))
+        OR EXISTS (
+            SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH rm
+            WHERE rm.SOURCE = 'SECONDARY'
+              AND (ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_CODE))::VARIANT, (SELECT region_arr FROM sel_filters))
+                   OR ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_NAME))::VARIANT, (SELECT region_arr FROM sel_filters)))
+              AND (UPPER(TRIM(rm.REGION_CODE)) = UPPER(TRIM(v.REGION))
+                   OR UPPER(TRIM(rm.REGION_NAME)) = UPPER(TRIM(v.REGION)))
         )
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION))::VARIANT,
-                          (SELECT region_arr FROM sel_filters))
-      )
-  -- ✅ Conditional CATEGORY (MULTI)
-  AND (
+    )
+
+    -- ✅ CATEGORY (secondary) — IN_SECONDARY = 1, EXISTS + direct match
+    AND (
         ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
-        OR NOT EXISTS (
-            SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH
-            WHERE IN_SECONDARY = 1
-              AND (ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_NAME))::VARIANT,
-                                  (SELECT category_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_CODE))::VARIANT,
-                                     (SELECT category_arr FROM sel_filters)))
+        OR EXISTS (
+            SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH cm
+            WHERE cm.IN_SECONDARY = 1
+              AND (ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_NAME))::VARIANT, (SELECT category_arr FROM sel_filters))
+                   OR ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_CODE))::VARIANT, (SELECT category_arr FROM sel_filters)))
+              AND (UPPER(TRIM(cm.CATEGORY_NAME)) = UPPER(TRIM(v.CATEGORY))
+                   OR UPPER(TRIM(cm.CATEGORY_CODE)) = UPPER(TRIM(v.CATEGORY)))
         )
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.CATEGORY))::VARIANT,
-                          (SELECT category_arr FROM sel_filters))
-      )
-  -- ✅ Conditional BRAND (MULTI)
-  AND (
+    )
+
+    -- ✅ BRAND (secondary) — IN_SECONDARY = 1, EXISTS + direct match
+    AND (
         ARRAY_SIZE((SELECT brand_arr FROM sel_filters)) = 0
-        OR NOT EXISTS (
-            SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH
-            WHERE IN_SECONDARY = 1
-              AND ARRAY_CONTAINS(UPPER(TRIM(BRAND))::VARIANT,
-                                 (SELECT brand_arr FROM sel_filters))
+        OR EXISTS (
+            SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH bm
+            WHERE bm.IN_SECONDARY = 1
+              AND ARRAY_CONTAINS(UPPER(TRIM(bm.BRAND))::VARIANT, (SELECT brand_arr FROM sel_filters))
+              AND UPPER(TRIM(bm.BRAND)) = UPPER(TRIM(v.BRAND))
         )
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
-                          (SELECT brand_arr FROM sel_filters))
-      )
-  -- ✅ CHANNEL_TYPE (Secondary-only — MULTI)
-  AND (
+    )
+
+    -- ✅ CHANNEL_TYPE (secondary-only — MULTI)
+    AND (
         ARRAY_SIZE((SELECT channel_type_arr FROM sel_filters)) = 0
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT,
-                          (SELECT channel_type_arr FROM sel_filters))
-      )
-  -- ✅ TOWN (Secondary-only — MULTI)
-  AND (
+        OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT, (SELECT channel_type_arr FROM sel_filters))
+    )
+
+    -- ✅ TOWN (secondary-only — MULTI)
+    AND (
         ARRAY_SIZE((SELECT town_arr FROM sel_filters)) = 0
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT,
-                          (SELECT town_arr FROM sel_filters))
-      )
-  -- ✅ Conditional DISTRIBUTOR (MULTI)
-  AND (
+        OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT, (SELECT town_arr FROM sel_filters))
+    )
+
+    -- ✅ DISTRIBUTOR (secondary) — EXISTS + direct match
+    AND (
         ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
-        OR NOT EXISTS (
-            SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH
-            WHERE ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_CODE))::VARIANT,
-                                 (SELECT distributor_arr FROM sel_filters))
-               OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_CODE))::VARIANT,
-                                 (SELECT distributor_arr FROM sel_filters))
-               OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_NAME))::VARIANT,
-                                 (SELECT distributor_arr FROM sel_filters))
+        OR EXISTS (
+            SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH df
+            WHERE (ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                   OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                   OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_NAME))::VARIANT, (SELECT distributor_arr FROM sel_filters)))
+              AND UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.DISTRIBUTOR_CODE_RD))
         )
-        OR ARRAY_CONTAINS(UPPER(TRIM(v.DISTRIBUTOR_CODE_RD))::VARIANT,
-                          (SELECT distributor_arr FROM sel_filters))
-      )
+    )
 GROUP BY v.CHANNEL_TYPE
 ORDER BY SALES_VALUE DESC;
-
-
-
 
 
 
@@ -1232,7 +1156,7 @@ ORDER BY SALES_VALUE DESC;
 SET v_years        = '2027';        -- '2025,2026'
 SET v_months       = 'AUG';          -- 'SEP' | 'SEP,NOV,FEB' | NULL
 SET v_region       = NULL;               -- 'SD,KP'
-SET v_category     = 'Baby Diapers';               -- 'Baby Diapers,Pants'
+SET v_category     = NULL;               -- 'Baby Diapers,Pants'
 SET v_brand        = NULL;               -- 'Bona Plus,Momse'
 SET v_channel_type = NULL;               -- 'MT,GT'
 SET v_town         = NULL;               -- 'Karachi,Lahore'
@@ -1527,8 +1451,6 @@ ORDER BY SALES_VALUE DESC;
 
 
 
-
-
 -- =====================================================================
 -- ✅ SECONDARY KPI #6 — TOP N BRANDS BY NET SALES VALUE (MTD)
 -- ADJUSTED VERSION: adds MT-Direct distributor primary sales top-up
@@ -1541,23 +1463,23 @@ ORDER BY SALES_VALUE DESC;
 --
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
---                             + APP_USER_TAG  ✅ NEW
--- NOTE: CHANNEL_TYPE and TOWN have no equivalent in zfi_sco_vw (primary),
---       so they are applied to the secondary component only.
--- NOTE: APP_USER_TAG is secondary-only.
---       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
+--                             + APP_USER_TAG
+--
+-- ✅ FIX: NOT EXISTS bypass removed. Ab har IN_SECONDARY / IN_PRIMARY
+--         filter EXISTS + direct match karta hai.
+--         Secondary se MT-Direct distributors EXCLUDE (no double count).
 -- =====================================================================
 
-SET v_years        = '2027';        -- '2025,2026'
-SET v_months       = 'AUG';  -- 'SEP' | 'SEP,NOV,FEB' | NULL
-SET v_region       = NULL;               -- 'SD,KP'
-SET v_category     = NULL;--NULL;               -- 'Baby Diapers,Pants'
-SET v_brand        = NULL;               -- 'Bona Plus,Momse'
-SET v_channel_type = NULL;               -- 'MT,GT'
-SET v_town         = NULL;               -- 'Karachi,Lahore'
-SET v_distributor  = NULL;               -- 'D0458,D0459'
-SET v_app_user_tag = NULL;               -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
-SET top_n          = 10;                 -- kitne top brands chahiye
+SET v_years        = '2027';
+SET v_months       = 'AUG';
+SET v_region       = NULL;
+SET v_category     = NULL;
+SET v_brand        = NULL;
+SET v_channel_type = NULL;
+SET v_town         = NULL;
+SET v_distributor  = NULL;
+SET v_app_user_tag = NULL;
+SET top_n          = 10;
 
 WITH params AS (
     SELECT
@@ -1577,9 +1499,8 @@ WITH params AS (
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
         NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
-        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw
 ),
--- ✅ Build arrays for ALL filters (multi-select support)
 sel_filters AS (
     SELECT p.*,
         CASE WHEN p.region_raw IS NULL THEN ARRAY_CONSTRUCT()
@@ -1600,7 +1521,6 @@ sel_filters AS (
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
         END AS distributor_arr,
-        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
         CASE
             WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
             ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
@@ -1631,7 +1551,6 @@ resolved AS (
     SELECT sm.*,
         CASE WHEN ARRAY_SIZE(sm.year_arr) = 0 THEN ARRAY_CONSTRUCT(sm.current_fy)
              ELSE sm.year_arr END AS eff_years,
-        -- MTD months only
         CASE
             WHEN ARRAY_SIZE(sm.month_no_arr) = 0 THEN ARRAY_CONSTRUCT(sm.current_fy_month_no)
             ELSE sm.month_no_arr
@@ -1654,173 +1573,160 @@ mtd_ranges AS (
          LATERAL FLATTEN(input => r.eff_years) y,
          LATERAL FLATTEN(input => r.mtd_month_nos) m
 ),
--- ✅ NEW: list of MT-direct distributor codes
 mt_direct_codes AS (
     SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) AS DISTRIBUTOR_CODE
     FROM GOLD.MT_DIRECT_DISTRIBUTORS_VW
 ),
--- ✅ NEW: secondary by brand (grouped by BRAND)
+
+-- =====================================================================
+-- ✅ SECONDARY BY BRAND (salesflo) — MT-Direct EXCLUDE
+--    Case A & C handle: sirf tab aayega jab category IN_SECONDARY = 1
+-- =====================================================================
 secondary_by_brand AS (
     SELECT
         v.BRAND                             AS BRAND,
         SUM(v.NET_SALES)                    AS SALES_VALUE
     FROM Gold.salesflo_datadump_vw v
     WHERE
-        -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+        -- ✅ APP_USER_TAG (secondary-only, default excludes SD)
         CASE
-            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
-                                (SELECT app_user_tag_arr FROM sel_filters))
+            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
                 THEN v.APP_USER_TAGGED_TITLE <> 'SD'
-            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
-                                (SELECT app_user_tag_arr FROM sel_filters))
+            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT, (SELECT app_user_tag_arr FROM sel_filters))
         END
-      AND EXISTS (
-            SELECT 1 FROM mtd_ranges m
-            WHERE v.DATE BETWEEN m.m_start AND m.m_end
-          )
-      -- ✅ Conditional REGION (MULTI)
-      AND (
+
+        AND EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end)
+
+        -- ✅ MT-Direct distributors EXCLUDE (no double count)
+        AND UPPER(TRIM(v.DISTRIBUTOR_CODE_RD)) NOT IN (SELECT DISTRIBUTOR_CODE FROM mt_direct_codes)
+
+        -- ✅ REGION (secondary) — EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH
-                WHERE SOURCE = 'SECONDARY'
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(REGION_CODE))::VARIANT,
-                                      (SELECT region_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(REGION_NAME))::VARIANT,
-                                         (SELECT region_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH rm
+                WHERE rm.SOURCE = 'SECONDARY'
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_CODE))::VARIANT, (SELECT region_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_NAME))::VARIANT, (SELECT region_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(rm.REGION_CODE)) = UPPER(TRIM(v.REGION))
+                       OR UPPER(TRIM(rm.REGION_NAME)) = UPPER(TRIM(v.REGION)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
-          )
-      -- ✅ Conditional CATEGORY (MULTI)
-      AND (
+        )
+
+        -- ✅ CATEGORY (secondary) — IN_SECONDARY = 1, EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH
-                WHERE IN_SECONDARY = 1
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_NAME))::VARIANT,
-                                      (SELECT category_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_CODE))::VARIANT,
-                                         (SELECT category_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH cm
+                WHERE cm.IN_SECONDARY = 1
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_NAME))::VARIANT, (SELECT category_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_CODE))::VARIANT, (SELECT category_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(cm.CATEGORY_NAME)) = UPPER(TRIM(v.CATEGORY))
+                       OR UPPER(TRIM(cm.CATEGORY_CODE)) = UPPER(TRIM(v.CATEGORY)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.CATEGORY))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
-          )
-      -- ✅ Conditional BRAND (MULTI)
-      AND (
+        )
+
+        -- ✅ BRAND (secondary) — IN_SECONDARY = 1, EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT brand_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH
-                WHERE IN_SECONDARY = 1
-                  AND ARRAY_CONTAINS(UPPER(TRIM(BRAND))::VARIANT,
-                                     (SELECT brand_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH bm
+                WHERE bm.IN_SECONDARY = 1
+                  AND ARRAY_CONTAINS(UPPER(TRIM(bm.BRAND))::VARIANT, (SELECT brand_arr FROM sel_filters))
+                  AND UPPER(TRIM(bm.BRAND)) = UPPER(TRIM(v.BRAND))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
-                              (SELECT brand_arr FROM sel_filters))
-          )
-      -- ✅ CHANNEL_TYPE (Secondary-only — MULTI)
-      AND (
+        )
+
+        -- ✅ CHANNEL_TYPE (secondary-only — MULTI)
+        AND (
             ARRAY_SIZE((SELECT channel_type_arr FROM sel_filters)) = 0
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT,
-                              (SELECT channel_type_arr FROM sel_filters))
-          )
-      -- ✅ TOWN (Secondary-only — MULTI)
-      AND (
+            OR ARRAY_CONTAINS(UPPER(TRIM(v.CHANNEL_TYPE))::VARIANT, (SELECT channel_type_arr FROM sel_filters))
+        )
+
+        -- ✅ TOWN (secondary-only — MULTI)
+        AND (
             ARRAY_SIZE((SELECT town_arr FROM sel_filters)) = 0
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT,
-                              (SELECT town_arr FROM sel_filters))
-          )
-      -- ✅ Conditional DISTRIBUTOR (MULTI)
-      AND (
+            OR ARRAY_CONTAINS(UPPER(TRIM(v.TOWN_NAME))::VARIANT, (SELECT town_arr FROM sel_filters))
+        )
+
+        -- ✅ DISTRIBUTOR (secondary) — EXISTS + direct match
+        AND (
             ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH
-                WHERE ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_NAME))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH df
+                WHERE (ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_NAME))::VARIANT, (SELECT distributor_arr FROM sel_filters)))
+                  AND UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.DISTRIBUTOR_CODE_RD))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.DISTRIBUTOR_CODE_RD))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
-          )
+        )
     GROUP BY v.BRAND
 ),
--- ✅ NEW: primary by brand (MT-direct only), grouped by BRAND
+
+-- =====================================================================
+-- ✅ PRIMARY BY BRAND (zfi_sco, MT-Direct only)
+--    Case B & C handle: sirf tab aayega jab category IN_PRIMARY = 1
+-- =====================================================================
 primary_by_brand AS (
     SELECT
         v.BRAND                             AS BRAND,
         SUM(v.Value)                        AS SALES_VALUE
     FROM gold.zfi_sco_vw v
-    WHERE EXISTS (
-            SELECT 1 FROM mtd_ranges m
-            WHERE v.invoice_Date BETWEEN m.m_start AND m.m_end
-          )
+    WHERE EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.invoice_Date BETWEEN m.m_start AND m.m_end)
       AND UPPER(TRIM(v.PARTY_CODE)) IN (SELECT DISTRIBUTOR_CODE FROM mt_direct_codes)
-      -- ✅ Conditional REGION (MULTI)
+
+      -- ✅ REGION (primary) — EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH
-                WHERE SOURCE = 'PRIMARY'
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(REGION_CODE))::VARIANT,
-                                      (SELECT region_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(REGION_NAME))::VARIANT,
-                                         (SELECT region_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_REGION_MAPPING_1ST_DASH rm
+                WHERE rm.SOURCE = 'PRIMARY'
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_CODE))::VARIANT, (SELECT region_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(rm.REGION_NAME))::VARIANT, (SELECT region_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(rm.REGION_CODE)) = UPPER(TRIM(v.REGION))
+                       OR UPPER(TRIM(rm.REGION_NAME)) = UPPER(TRIM(v.REGION_NAME)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.REGION_NAME))::VARIANT,
-                              (SELECT region_arr FROM sel_filters))
           )
-      -- ✅ Conditional CATEGORY (MULTI)
+
+      -- ✅ CATEGORY (primary) — IN_PRIMARY = 1, EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH
-                WHERE IN_PRIMARY = 1
-                  AND (ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_NAME))::VARIANT,
-                                      (SELECT category_arr FROM sel_filters))
-                       OR ARRAY_CONTAINS(UPPER(TRIM(CATEGORY_CODE))::VARIANT,
-                                         (SELECT category_arr FROM sel_filters)))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_CATEGORY_MAPPING_1ST_DASH cm
+                WHERE cm.IN_PRIMARY = 1
+                  AND (ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_NAME))::VARIANT, (SELECT category_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(cm.CATEGORY_CODE))::VARIANT, (SELECT category_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(cm.CATEGORY_NAME)) = UPPER(TRIM(v.MATERIAL_GROUP_NAME))
+                       OR UPPER(TRIM(cm.CATEGORY_CODE)) = UPPER(TRIM(v.MATERIAL_GROUP)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.MATERIAL_GROUP))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.MATERIAL_GROUP_NAME))::VARIANT,
-                              (SELECT category_arr FROM sel_filters))
           )
-      -- ✅ Conditional BRAND (MULTI)
+
+      -- ✅ BRAND (primary) — IN_PRIMARY = 1, EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT brand_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH
-                WHERE IN_PRIMARY = 1
-                  AND ARRAY_CONTAINS(UPPER(TRIM(BRAND))::VARIANT,
-                                     (SELECT brand_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM GOLD.VW_BRAND_MAPPING_1st_DASH bm
+                WHERE bm.IN_PRIMARY = 1
+                  AND ARRAY_CONTAINS(UPPER(TRIM(bm.BRAND))::VARIANT, (SELECT brand_arr FROM sel_filters))
+                  AND UPPER(TRIM(bm.BRAND)) = UPPER(TRIM(v.BRAND))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
-                              (SELECT brand_arr FROM sel_filters))
           )
-      -- ✅ Conditional DISTRIBUTOR (MULTI)
+
+      -- ✅ DISTRIBUTOR (primary) — EXISTS + direct match
       AND (
             ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
-            OR NOT EXISTS (
-                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH
-                WHERE ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_CODE))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
-                   OR ARRAY_CONTAINS(UPPER(TRIM(DISTRIBUTOR_SAP_NAME))::VARIANT,
-                                     (SELECT distributor_arr FROM sel_filters))
+            OR EXISTS (
+                SELECT 1 FROM SALESDWH.GOLD.VW_DISTRIBUTOR_FILTER_1st_DASH df
+                WHERE (ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE))::VARIANT, (SELECT distributor_arr FROM sel_filters))
+                       OR ARRAY_CONTAINS(UPPER(TRIM(df.DISTRIBUTOR_SAP_NAME))::VARIANT, (SELECT distributor_arr FROM sel_filters)))
+                  AND (UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.PARTY_CODE))
+                       OR UPPER(TRIM(df.DISTRIBUTOR_SAP_CODE)) = UPPER(TRIM(v.SHIP_TO_PARTY)))
             )
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.PARTY_CODE))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
-            OR ARRAY_CONTAINS(UPPER(TRIM(v.SHIP_TO_PARTY))::VARIANT,
-                              (SELECT distributor_arr FROM sel_filters))
           )
     GROUP BY v.BRAND
 )
+
 -- ✅ FINAL: union secondary + MT-direct primary by brand, re-aggregate, Top-N
 SELECT
     BRAND,
@@ -1834,9 +1740,6 @@ WHERE BRAND IS NOT NULL
 GROUP BY BRAND
 ORDER BY SALES_VALUE DESC
 LIMIT $top_n;
-
-
-
 
 
 

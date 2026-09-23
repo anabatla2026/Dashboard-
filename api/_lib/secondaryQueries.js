@@ -3,6 +3,13 @@ import { query, SNOWFLAKE_DATABASE } from "./snowflakeClient.js";
 const SEC = `${SNOWFLAKE_DATABASE}.GOLD.SALESFLO_DATADUMP_VW`;
 const PRI = `${SNOWFLAKE_DATABASE}.GOLD.ZFI_SCO_VW`;
 const MT_DIRECT = `${SNOWFLAKE_DATABASE}.GOLD.MT_DIRECT_DISTRIBUTORS_VW`;
+
+// MT-Direct distributors are captured on the primary side (`ZFI_SCO_VW`)
+// and added via the primary top-up path. To avoid double-counting them in
+// combined sales values, they are excluded from every secondary SUM query.
+// NOT applied to KPI #2 productive-stores/distributors COUNTs — those still
+// need MT-Direct outlets/distributors visible in the distinct counts.
+const SEC_NON_MT_DIRECT = `UPPER(TRIM(DISTRIBUTOR_CODE_RD)) NOT IN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT})`;
 const TARGETS = `${SNOWFLAKE_DATABASE}.GOLD.TARGETS_VW`;
 const DIST_MASTER = `${SNOWFLAKE_DATABASE}.GOLD.DISTRIBUTOR_MASTER_VW`;
 const REGION_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_REGION_MAPPING_1ST_DASH`;
@@ -66,7 +73,13 @@ async function resolveSecondaryFilters(filters = {}) {
       columns.flatMap(() => selected)
     );
     if (rows.length === 0) {
-      resolved[key] = undefined;
+      // No mapping row satisfies the user's value AND `IN_SECONDARY = 1`
+      // (e.g. `UNDERPAD SHEET`, where `IN_SECONDARY = 0`). We must not drop
+      // the filter — that would silently expose ALL secondary rows as if
+      // they belonged to the user's selection. Instead pin the filter to
+      // a sentinel string that no fact-table value can equal, so this side
+      // legitimately contributes zero rows.
+      resolved[key] = ["__NO_MATCH_ON_SECONDARY__"];
       continue;
     }
     const expanded = new Set(selected);
@@ -162,7 +175,13 @@ async function resolvePrimaryTopupFilters(filters = {}) {
       columns.flatMap(() => selected)
     );
     if (rows.length === 0) {
-      resolved[key] = undefined;
+      // No mapping row satisfies the user's value AND `IN_PRIMARY = 1`
+      // (e.g. `Toiletries`, where `IN_PRIMARY = 0`). Dropping the filter
+      // would let the full month's primary top-up leak through, so the
+      // Toiletries card was showing 33,233 CTN instead of the real 189.
+      // Pin to a sentinel so the primary top-up query legitimately returns
+      // zero for these secondary-only categories/regions/brands.
+      resolved[key] = ["__NO_MATCH_ON_PRIMARY__"];
       continue;
     }
     const expanded = new Set(selected);
@@ -341,24 +360,36 @@ export async function getSecondaryKpis({ years, months, filters = {} } = {}) {
   const resolvedFilters = await resolveSecondaryFilters(filters);
   const { clause, binds: filterBinds } = buildWhere(resolvedFilters, { skip: ["year", "month"] });
 
+  // MT-Direct exclusion is applied only to SUM aggregates (sales / volume) to
+  // avoid double-counting with the primary top-up. COUNT DISTINCT stays
+  // unfiltered so KPI #2 productive-stores/distributors keep counting every
+  // secondary outlet/distributor, including MT-Direct.
+  //
+  // Implementation: LEFT JOIN the MT-Direct code list once, then use
+  // `md.CODE IS NULL` inside the SUM CASE predicates. Snowflake does not
+  // allow an uncorrelated `NOT IN (SELECT ... FROM ...)` subquery inside an
+  // aggregate CASE expression — the join is a functionally equivalent form
+  // that compiles correctly and is evaluated once per row.
   const sql = `
     SELECT
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN NET_SALES END)  AS MTD_SALES,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN SALES_CTN END)  AS MTD_CTN,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN SALES_UNITS END) AS MTD_UNITS,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND MONTH IN (${inList(mtdMonths)}) THEN NET_SALES END) AS LY_MTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN NET_SALES END)  AS MTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN SALES_CTN END)  AS MTD_CTN,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN SALES_UNITS END) AS MTD_UNITS,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND MONTH IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN NET_SALES END) AS LY_MTD_SALES,
       COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN TRIM(OUTLET_CODE) END)      AS MTD_STORES,
       COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN TRIM(DISTRIBUTOR_CODE) END) AS MTD_DIST,
 
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN NET_SALES END)  AS FYTD_SALES,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN SALES_CTN END)  AS FYTD_CTN,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN SALES_UNITS END) AS FYTD_UNITS,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN NET_SALES END) AS LY_FYTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? AND md.CODE IS NULL THEN NET_SALES END)  AS FYTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? AND md.CODE IS NULL THEN SALES_CTN END)  AS FYTD_CTN,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? AND md.CODE IS NULL THEN SALES_UNITS END) AS FYTD_UNITS,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? AND md.CODE IS NULL THEN NET_SALES END) AS LY_FYTD_SALES,
       COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN TRIM(OUTLET_CODE) END)      AS FYTD_STORES,
       COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN TRIM(DISTRIBUTOR_CODE) END) AS FYTD_DIST,
 
       COUNT(DISTINCT TRIM(OUTLET_CODE)) AS TOTAL_STORES
-    FROM ${SEC}
+    FROM ${SEC} v
+    LEFT JOIN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) AS CODE FROM ${MT_DIRECT}) md
+      ON UPPER(TRIM(v.DISTRIBUTOR_CODE_RD)) = md.CODE
     WHERE DATE IS NOT NULL
     ${clause}
   `;
@@ -424,7 +455,7 @@ export async function getSecondaryTrend(filters = {}, granularity = "day") {
   const rows = await query(
     `SELECT TO_VARCHAR(${dateExpr}, 'YYYY-MM-DD') AS DATE, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
-    WHERE DATE IS NOT NULL ${clause}
+    WHERE DATE IS NOT NULL AND ${SEC_NON_MT_DIRECT} ${clause}
      GROUP BY ${dateExpr}
      ORDER BY ${dateExpr}`,
     binds
@@ -455,7 +486,7 @@ async function groupByOne(col, filters, extra = {}) {
   const rows = await query(
     `SELECT ${col} AS LABEL, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
-    WHERE DATE IS NOT NULL ${clause} ${extraClause}
+    WHERE DATE IS NOT NULL AND ${SEC_NON_MT_DIRECT} ${clause} ${extraClause}
      GROUP BY ${col}
      ORDER BY NET_SALES DESC`,
     [...binds, ...extraBinds]
@@ -565,7 +596,7 @@ export async function getRegionTargetVsAchievement({ years, months, filters = {}
               SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN NET_SALES END) AS ACHIEVEMENT_MTD,
               SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN NET_SALES END) AS ACHIEVEMENT_FYTD
       FROM ${SEC}
-      WHERE 1 = 1 ${clause}
+      WHERE ${SEC_NON_MT_DIRECT} ${clause}
        GROUP BY REGION`,
           [...y, ...mtdMonths, ...y, cutoffNo, ...filterBinds]
     ),
@@ -605,7 +636,7 @@ export async function getMonthOverMonth({ fiscalYearStart, filters = {} } = {}) 
   const rows = await query(
     `SELECT MONTH, YEAR, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
-    WHERE DATE >= ? AND DATE < ? ${clause}
+    WHERE DATE >= ? AND DATE < ? AND ${SEC_NON_MT_DIRECT} ${clause}
      GROUP BY MONTH, YEAR
      ORDER BY CASE MONTH
        WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
@@ -653,3 +684,4 @@ export async function getSecondaryMeta() {
     dateRange: { min: r.MIND, max: r.MAXD },
   };
 }
+
