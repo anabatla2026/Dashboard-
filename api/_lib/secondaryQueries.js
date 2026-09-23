@@ -25,10 +25,6 @@ const FISCAL_MONTH_NO_EXPR = `(CASE MONTH
   WHEN 'Nov' THEN 5 WHEN 'Dec' THEN 6 WHEN 'Jan' THEN 7 WHEN 'Feb' THEN 8
   WHEN 'Mar' THEN 9 WHEN 'Apr' THEN 10 WHEN 'May' THEN 11 WHEN 'Jun' THEN 12 END)`;
 
-// Standing filter applied on every Secondary query, independent of the
-// user's own App User Tag selection.
-const STANDING_FILTER = "APP_USER_TAGGED_TITLE <> 'SD'";
-
 // Dashboard filter key -> fact-table column(s) to match (OR'd when more than
 // one). segment/appUser are pre-existing filters. `dist` is resolved via
 // withResolvedDist before this map is used.
@@ -275,7 +271,7 @@ async function getPrimaryTopupMom(filters, fiscalYearStart) {
 
 async function currentFiscal() {
   const rows = await query(
-    `SELECT TO_VARCHAR(MAX(DATE), 'YYYY-MM-DD') AS MAXD FROM ${SEC} WHERE DATE IS NOT NULL AND ${STANDING_FILTER}`
+    `SELECT TO_VARCHAR(MAX(DATE), 'YYYY-MM-DD') AS MAXD FROM ${SEC} WHERE DATE IS NOT NULL`
   );
   const maxd = rows[0]?.MAXD;
   if (!maxd) return null;
@@ -345,7 +341,7 @@ export async function getSecondaryKpis({ years, months, filters = {} } = {}) {
 
       COUNT(DISTINCT TRIM(OUTLET_CODE)) AS TOTAL_STORES
     FROM ${SEC}
-    WHERE DATE IS NOT NULL AND ${STANDING_FILTER}
+    WHERE DATE IS NOT NULL
     ${clause}
   `;
   const binds = [
@@ -410,7 +406,7 @@ export async function getSecondaryTrend(filters = {}, granularity = "day") {
   const rows = await query(
     `SELECT TO_VARCHAR(${dateExpr}, 'YYYY-MM-DD') AS DATE, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
-     WHERE DATE IS NOT NULL AND ${STANDING_FILTER} ${clause}
+    WHERE DATE IS NOT NULL ${clause}
      GROUP BY ${dateExpr}
      ORDER BY ${dateExpr}`,
     binds
@@ -441,7 +437,7 @@ async function groupByOne(col, filters, extra = {}) {
   const rows = await query(
     `SELECT ${col} AS LABEL, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
-     WHERE DATE IS NOT NULL AND ${STANDING_FILTER} ${clause} ${extraClause}
+    WHERE DATE IS NOT NULL ${clause} ${extraClause}
      GROUP BY ${col}
      ORDER BY NET_SALES DESC`,
     [...binds, ...extraBinds]
@@ -531,11 +527,13 @@ async function targetsByRegion(calendarPairs) {
   return rows;
 }
 
-export async function getRegionTargetVsAchievement({ years, months } = {}) {
+export async function getRegionTargetVsAchievement({ years, months, filters = {} } = {}) {
   const period = await resolvePeriod(years, months);
   if (!period) return [];
   const { years: y, mtdMonths, fytdMonths } = period;
   const cutoffNo = Math.max(...fytdMonths.map((m) => FISCAL_MONTH_NO[m]));
+  const resolvedFilters = await resolveSecondaryFilters(filters);
+  const { clause, binds: filterBinds } = buildWhere(resolvedFilters, { skip: ["year", "month"] });
 
   const [mtdTargets, fytdTargets, achievementRows, topupRows] = await Promise.all([
     targetsByRegion(toCalendarPairs(y, mtdMonths)),
@@ -544,10 +542,10 @@ export async function getRegionTargetVsAchievement({ years, months } = {}) {
       `SELECT REGION,
               SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN NET_SALES END) AS ACHIEVEMENT_MTD,
               SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN NET_SALES END) AS ACHIEVEMENT_FYTD
-       FROM ${SEC}
-       WHERE ${STANDING_FILTER}
+      FROM ${SEC}
+      WHERE 1 = 1 ${clause}
        GROUP BY REGION`,
-      [...y, ...mtdMonths, ...y, cutoffNo]
+          [...y, ...mtdMonths, ...y, cutoffNo, ...filterBinds]
     ),
     getPrimaryTopupRegionAchievement({}, y, mtdMonths, fytdMonths),
   ]);
@@ -585,7 +583,7 @@ export async function getMonthOverMonth({ fiscalYearStart, filters = {} } = {}) 
   const rows = await query(
     `SELECT MONTH, YEAR, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
-     WHERE DATE >= ? AND DATE < ? AND ${STANDING_FILTER} ${clause}
+    WHERE DATE >= ? AND DATE < ? ${clause}
      GROUP BY MONTH, YEAR
      ORDER BY CASE MONTH
        WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4

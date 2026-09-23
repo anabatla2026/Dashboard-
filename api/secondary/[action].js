@@ -45,7 +45,7 @@ export default async function handler(req, res) {
         break;
       case "region-target": {
         const filters = parseFilters(req.query);
-        data = await getRegionTargetVsAchievement({ years: filters.year, months: filters.month });
+        data = await getRegionTargetVsAchievement({ years: filters.year, months: filters.month, filters });
         break;
       }
       case "mom":
