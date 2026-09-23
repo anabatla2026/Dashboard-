@@ -2,6 +2,9 @@ import { query, SNOWFLAKE_DATABASE } from "./snowflakeClient.js";
 
 const PRI = `${SNOWFLAKE_DATABASE}.GOLD.ZFI_SCO_VW`;
 const DIST_FILTER = `${SNOWFLAKE_DATABASE}.GOLD.VW_DISTRIBUTOR_FILTER_1ST_DASH`;
+const REGION_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_REGION_MAPPING_1ST_DASH`;
+const CATEGORY_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_CATEGORY_MAPPING_1ST_DASH`;
+const BRAND_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_BRAND_MAPPING_1ST_DASH`;
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // Fiscal month order (Jul-Jun) for sorting the Month dropdown; MONTH_SHORT
@@ -28,10 +31,10 @@ const FISCAL_MONTH_NO_EXPR =
 const COLUMN_EXPR = {
   year: [FISCAL_YEAR_EXPR],
   month: [MONTH_EXPR],
-  region: ["REGION"],
-  cat: ["MATERIAL_GROUP"],
-  brand: ["BRAND"],
-  dist: ["PARTY_CODE", "SHIP_TO_PARTY"],
+  region: ["UPPER(TRIM(REGION))", "UPPER(TRIM(REGION_NAME))"],
+  cat: ["UPPER(TRIM(MATERIAL_GROUP))", "UPPER(TRIM(MATERIAL_GROUP_NAME))"],
+  brand: ["UPPER(TRIM(BRAND))"],
+  dist: ["UPPER(TRIM(PARTY_CODE))", "UPPER(TRIM(SHIP_TO_PARTY))"],
 };
 
 function buildWhere(filters = {}, { skip = [] } = {}) {
@@ -68,7 +71,45 @@ async function resolveDistToSapCodes(distCodes) {
 async function withResolvedDist(filters = {}) {
   if (!Array.isArray(filters.dist) || filters.dist.length === 0) return filters;
   const sapCodes = await resolveDistToSapCodes(filters.dist);
-  return { ...filters, dist: sapCodes.length ? sapCodes : ["__NO_PRIMARY_MATCH__"] };
+  return sapCodes.length ? { ...filters, dist: sapCodes } : { ...filters, dist: undefined };
+}
+
+async function resolveMappedValues(filters = {}, key, table, flag) {
+  const values = filters[key];
+  if (!Array.isArray(values) || values.length === 0) return filters;
+  const mappingColumns = key === "region"
+    ? ["REGION_CODE", "REGION_NAME"]
+    : key === "cat"
+      ? ["CATEGORY_CODE", "CATEGORY_NAME"]
+      : ["BRAND"];
+  const selected = values.map((value) => String(value).trim().toUpperCase());
+  const rows = await query(
+    `SELECT * FROM ${table}
+     WHERE ${flag}
+       AND (${mappingColumns.map((column) => `UPPER(TRIM(${column})) IN (${values.map(() => "?").join(", ")})`).join(" OR ")})`,
+    mappingColumns.flatMap(() => selected)
+  );
+  if (rows.length === 0) return { ...filters, [key]: undefined };
+  const mapped = new Set(selected);
+  for (const row of rows) {
+    if (key === "region") {
+      mapped.add(String(row.REGION_CODE || "").trim().toUpperCase());
+      mapped.add(String(row.REGION_NAME || "").trim().toUpperCase());
+    } else if (key === "cat") {
+      mapped.add(String(row.CATEGORY_CODE || "").trim().toUpperCase());
+      mapped.add(String(row.CATEGORY_NAME || "").trim().toUpperCase());
+    } else {
+      mapped.add(String(row.BRAND || "").trim().toUpperCase());
+    }
+  }
+  return { ...filters, [key]: [...mapped].filter(Boolean) };
+}
+
+async function resolvePrimaryFilters(filters = {}) {
+  let resolved = await resolveMappedValues(filters, "region", REGION_MAPPING, "SOURCE = 'PRIMARY'");
+  resolved = await resolveMappedValues(resolved, "cat", CATEGORY_MAPPING, "IN_PRIMARY = 1");
+  resolved = await resolveMappedValues(resolved, "brand", BRAND_MAPPING, "IN_PRIMARY = 1");
+  return withResolvedDist(resolved);
 }
 
 async function currentFiscal() {
@@ -123,20 +164,20 @@ export async function getPrimaryKpis({ years, months, filters = {} } = {}) {
   const lyYears = y.map((n) => n - 1);
   const cutoffNo = Math.max(...fytdMonths.map((m) => FISCAL_MONTH_NO[m]));
 
-  const resolvedFilters = await withResolvedDist(filters);
+  const resolvedFilters = await resolvePrimaryFilters(filters);
   const { clause, binds: filterBinds } = buildWhere(resolvedFilters, { skip: ["year", "month"] });
 
   const sql = `
     SELECT
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${MONTH_EXPR} IN (${inList(mtdMonths)}) THEN Total_Value END) AS MTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${MONTH_EXPR} IN (${inList(mtdMonths)}) THEN Value END) AS MTD_SALES,
       SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${MONTH_EXPR} IN (${inList(mtdMonths)}) THEN Qty_In_Ctn END)  AS MTD_CTN,
       SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${MONTH_EXPR} IN (${inList(mtdMonths)}) THEN Qty_In_Pcs END)  AS MTD_PCS,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND ${MONTH_EXPR} IN (${inList(mtdMonths)}) THEN Total_Value END) AS LY_MTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND ${MONTH_EXPR} IN (${inList(mtdMonths)}) THEN Value END) AS LY_MTD_SALES,
 
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN Total_Value END) AS FYTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN Value END) AS FYTD_SALES,
       SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN Qty_In_Ctn END)  AS FYTD_CTN,
       SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN Qty_In_Pcs END)  AS FYTD_PCS,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN Total_Value END) AS LY_FYTD_SALES
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN Value END) AS LY_FYTD_SALES
     FROM ${PRI}
     WHERE ${VALIDITY} ${clause}
   `;
@@ -180,11 +221,11 @@ const TREND_DATE_EXPR = {
   month: "DATE_TRUNC('month', Posting_Date)",
 };
 export async function getPrimaryTrend(filters = {}, granularity = "day") {
-  const resolvedFilters = await withResolvedDist(await withDefaultPeriod(filters));
+  const resolvedFilters = await resolvePrimaryFilters(await withDefaultPeriod(filters));
   const { clause, binds } = buildWhere(resolvedFilters);
   const dateExpr = TREND_DATE_EXPR[granularity] || TREND_DATE_EXPR.day;
   const rows = await query(
-    `SELECT TO_VARCHAR(${dateExpr}, 'YYYY-MM-DD') AS DATE, SUM(Total_Value) AS NET_SALES
+    `SELECT TO_VARCHAR(${dateExpr}, 'YYYY-MM-DD') AS DATE, SUM(Value) AS NET_SALES
      FROM ${PRI}
      WHERE ${VALIDITY} ${clause}
      GROUP BY ${dateExpr}
@@ -206,10 +247,10 @@ export async function getPrimaryByBrand({ filters = {}, level = "brand" } = {}) 
 }
 
 async function groupByOne(col, filters) {
-  const resolvedFilters = await withResolvedDist(await withDefaultPeriod(filters));
+  const resolvedFilters = await resolvePrimaryFilters(await withDefaultPeriod(filters));
   const { clause, binds } = buildWhere(resolvedFilters);
   const rows = await query(
-    `SELECT ${col} AS LABEL, SUM(Total_Value) AS NET_SALES
+    `SELECT ${col} AS LABEL, SUM(Value) AS NET_SALES
      FROM ${PRI}
      WHERE ${VALIDITY} ${clause}
      GROUP BY ${col}
@@ -221,12 +262,12 @@ async function groupByOne(col, filters) {
 
 // Month-over-Month Sales by fiscal year. Region is not filterable here.
 export async function getPrimaryMonthOverMonth({ fiscalYearStart, filters = {} } = {}) {
-  const resolvedFilters = await withResolvedDist(filters);
+  const resolvedFilters = await resolvePrimaryFilters(filters);
   const { clause, binds } = buildWhere(resolvedFilters, { skip: ["year", "month", "region"] });
   const fyEndExclusive = `${Number(fiscalYearStart.slice(0, 4)) + 1}-${fiscalYearStart.slice(5)}`;
 
   const rows = await query(
-    `SELECT TO_CHAR(Posting_Date, 'Mon') AS MONTH, YEAR(Posting_Date) AS YEAR, SUM(Total_Value) AS NET_SALES
+    `SELECT TO_CHAR(Posting_Date, 'Mon') AS MONTH, YEAR(Posting_Date) AS YEAR, SUM(Value) AS NET_SALES
      FROM ${PRI}
      WHERE ${VALIDITY} AND Posting_Date >= ? AND Posting_Date < ? ${clause}
      GROUP BY TO_CHAR(Posting_Date, 'Mon'), YEAR(Posting_Date)
