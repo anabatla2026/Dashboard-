@@ -9,6 +9,12 @@
 
 
 
+
+
+
+
+
+
 -- =====================================================================
 -- ✅ SECONDARY KPI #1 — MTD / FYTD (Sales Value + CTN + PCS)
 -- ADJUSTED VERSION: adds MT-Direct distributor primary sales top-up
@@ -23,18 +29,22 @@
 --
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
+--                             + APP_USER_TAG  ✅ NEW
 -- NOTE: CHANNEL_TYPE and TOWN have no equivalent in zfi_sco_vw (primary),
 --       so they are applied to the secondary component only.
+-- NOTE: APP_USER_TAG is secondary-only (no equivalent in zfi_sco_vw).
+--       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
 -- =====================================================================
 
 SET v_years        = '2027';             -- '2025,2026'
 SET v_months       = 'AUG';             -- 'SEP' | 'SEP,NOV,FEB' | NULL
 SET v_region       = NULL;             -- 'SD,KP'
-SET v_category     = NULL;             -- 'Baby Diapers,Pants'
+SET v_category     = NULL;--'Baby Diapers';             -- 'Baby Diapers,Pants'
 SET v_brand        = NULL;             -- 'Bona Plus,Momse'
 SET v_channel_type = NULL;             -- 'Wholesale,GT,MT'
 SET v_town         = NULL;             -- 'Bhawalpur,Lahore'
 SET v_distributor  = NULL;             -- 'D0458,D0459'
+SET v_app_user_tag = 'MDSD,OB,SD - OB';             -- 'SD,ABC' | NULL (default: exclude SD)
 
 WITH params AS (
     SELECT
@@ -53,7 +63,8 @@ WITH params AS (
         NULLIF(TRIM($v_brand),        '')                           AS brand_raw,
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
-        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw
+        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
 ),
 sel_filters AS (
     SELECT p.*,
@@ -74,7 +85,12 @@ sel_filters AS (
         END AS town_arr,
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
-        END AS distributor_arr
+        END AS distributor_arr,
+        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
+        CASE
+            WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
+            ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
+        END AS app_user_tag_arr
     FROM params p
 ),
 sel_years AS (
@@ -145,8 +161,8 @@ mtd_ranges AS (
 ),
 -- ✅ NEW: list of MT-direct distributor codes
 mt_direct_codes AS (
-    SELECT  DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) AS DISTRIBUTOR_CODE   -- adjust column name if different
-    FROM GOLD.MT_DIRECT_DISTRIBUTORS_VW 
+    SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) AS DISTRIBUTOR_CODE
+    FROM GOLD.MT_DIRECT_DISTRIBUTORS_VW
 ),
 -- ✅ NEW: primary sales top-up for MT-direct distributors, MTD
 primary_topup_mtd AS (
@@ -201,8 +217,7 @@ primary_topup_mtd AS (
             OR ARRAY_CONTAINS(UPPER(TRIM(v.BRAND))::VARIANT,
                               (SELECT brand_arr FROM sel_filters))
           )
-      -- ✅ Conditional DISTRIBUTOR (MULTI) — still respected; only narrows
-      --    which MT-direct distributors are included, if user also filtered
+      -- ✅ Conditional DISTRIBUTOR (MULTI)
       AND (
             ARRAY_SIZE((SELECT distributor_arr FROM sel_filters)) = 0
             OR NOT EXISTS (
@@ -307,7 +322,15 @@ secondary_agg AS (
         SUM(CASE WHEN EXISTS (SELECT 1 FROM fy_ranges f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end)
                  THEN v.SALES_UNITS END)            AS FYTD_VOLUME_PCS
     FROM Gold.salesflo_datadump_vw v
-    WHERE v.APP_USER_TAGGED_TITLE <> 'SD'
+    WHERE
+        -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+        CASE
+            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+                THEN v.APP_USER_TAGGED_TITLE <> 'SD'
+            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+        END
       -- ✅ Conditional REGION (MULTI)
       AND (
             ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
@@ -403,13 +426,13 @@ CROSS JOIN primary_topup_fytd tf;
 
 
 
-
-
-
-      -- -- =====================================================================
+-- =====================================================================
 -- ✅ SECONDARY KPI #2 — MTD / FYTD PRODUCTIVE STORES & DISTRIBUTORS
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
+--                             + APP_USER_TAG  ✅ NEW
+-- NOTE: APP_USER_TAG is secondary-only.
+--       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
 -- =====================================================================
 SET v_years        = '2026';             -- '2025,2026'
 SET v_months       = 'NOV,FEB';          -- 'SEP' | 'SEP,NOV,FEB' | NULL
@@ -419,6 +442,7 @@ SET v_brand        = NULL;               -- 'Bona Plus,Momse'
 SET v_channel_type = NULL;               -- 'MT,GT'
 SET v_town         = NULL;               -- 'Karachi,Lahore'
 SET v_distributor  = NULL;               -- 'D0458,D0459'
+SET v_app_user_tag = NULL;               -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
 
 WITH params AS (
     SELECT
@@ -437,7 +461,8 @@ WITH params AS (
         NULLIF(TRIM($v_brand),        '')                           AS brand_raw,
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
-        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw
+        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
 ),
 -- ✅ Build arrays for ALL filters (multi-select support)
 sel_filters AS (
@@ -459,7 +484,12 @@ sel_filters AS (
         END AS town_arr,
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
-        END AS distributor_arr
+        END AS distributor_arr,
+        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
+        CASE
+            WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
+            ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
+        END AS app_user_tag_arr
     FROM params p
 ),
 sel_years AS (
@@ -553,7 +583,15 @@ SELECT
         THEN TRIM(v.DISTRIBUTOR_CODE)
     END)                                            AS FYTD_PRODUCTIVE_DISTRIBUTOR
 FROM Gold.salesflo_datadump_vw v
-WHERE v.APP_USER_TAGGED_TITLE <> 'SD'
+WHERE
+    -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+    CASE
+        WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
+                            (SELECT app_user_tag_arr FROM sel_filters))
+            THEN v.APP_USER_TAGGED_TITLE <> 'SD'
+        ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
+                            (SELECT app_user_tag_arr FROM sel_filters))
+    END
   -- ✅ Conditional REGION (MULTI)
   AND (
         ARRAY_SIZE((SELECT region_arr FROM sel_filters)) = 0
@@ -638,14 +676,6 @@ WHERE v.APP_USER_TAGGED_TITLE <> 'SD'
 
 
 
-
-
-
-
-
-
-
-
 -- =====================================================================
 -- ✅ SECONDARY KPI #3 — DAILY NET SALES TREND (MTD)
 -- ADJUSTED VERSION: adds MT-Direct distributor primary sales top-up
@@ -658,8 +688,11 @@ WHERE v.APP_USER_TAGGED_TITLE <> 'SD'
 --
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
+--                             + APP_USER_TAG  ✅ NEW
 -- NOTE: CHANNEL_TYPE and TOWN have no equivalent in zfi_sco_vw (primary),
 --       so they are applied to the secondary component only.
+-- NOTE: APP_USER_TAG is secondary-only.
+--       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
 -- =====================================================================
 
 SET v_years        = '2027';        -- '2025,2026'
@@ -670,6 +703,7 @@ SET v_brand        = NULL;        -- 'Bona Plus,Momse'
 SET v_channel_type = NULL;        -- 'MT,GT'
 SET v_town         = NULL;        -- 'Karachi,Lahore'
 SET v_distributor  = NULL;        -- 'D0458,D0459'
+SET v_app_user_tag = NULL;        -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
 
 WITH params AS (
     SELECT
@@ -688,7 +722,8 @@ WITH params AS (
         NULLIF(TRIM($v_brand),        '')                           AS brand_raw,
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
-        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw
+        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
 ),
 -- ✅ Build arrays for ALL filters (multi-select support)
 sel_filters AS (
@@ -710,7 +745,12 @@ sel_filters AS (
         END AS town_arr,
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
-        END AS distributor_arr
+        END AS distributor_arr,
+        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
+        CASE
+            WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
+            ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
+        END AS app_user_tag_arr
     FROM params p
 ),
 sel_years AS (
@@ -771,7 +811,15 @@ secondary_daily AS (
         v.DATE                      AS SALES_DATE,
         SUM(v.NET_SALES)            AS NET_SALES
     FROM Gold.salesflo_datadump_vw v
-    WHERE v.APP_USER_TAGGED_TITLE <> 'SD'
+    WHERE
+        -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+        CASE
+            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+                THEN v.APP_USER_TAGGED_TITLE <> 'SD'
+            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+        END
       AND EXISTS (
             SELECT 1 FROM mtd_ranges m
             WHERE v.DATE BETWEEN m.m_start AND m.m_end
@@ -945,14 +993,13 @@ ORDER BY SALES_DATE;
 
 
 
-
-
-
-
 -- =====================================================================
 -- ✅ SECONDARY KPI #4 — SALES VALUE BY CHANNEL TYPE (MTD)
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
+--                             + APP_USER_TAG  ✅ NEW
+-- NOTE: APP_USER_TAG is secondary-only.
+--       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
 -- =====================================================================
 SET v_years        = '2024,2025';             -- '2025,2026'
 SET v_months       = NULL;          -- 'SEP' | 'SEP,NOV,FEB' | NULL
@@ -962,6 +1009,7 @@ SET v_brand        = NULL;               -- 'Bona Plus,Momse'
 SET v_channel_type = NULL;               -- 'MT,GT'
 SET v_town         = NULL;               -- 'Karachi,Lahore'
 SET v_distributor  = NULL;               -- 'D0458,D0459'
+SET v_app_user_tag = NULL;               -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
 
 WITH params AS (
     SELECT
@@ -980,7 +1028,8 @@ WITH params AS (
         NULLIF(TRIM($v_brand),        '')                           AS brand_raw,
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
-        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw
+        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
 ),
 -- ✅ Build arrays for ALL filters (multi-select support)
 sel_filters AS (
@@ -1002,7 +1051,12 @@ sel_filters AS (
         END AS town_arr,
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
-        END AS distributor_arr
+        END AS distributor_arr,
+        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
+        CASE
+            WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
+            ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
+        END AS app_user_tag_arr
     FROM params p
 ),
 sel_years AS (
@@ -1060,7 +1114,15 @@ SELECT
     -- SUM(v.SALES_UNITS)                   AS VOLUME_PCS,
     -- COUNT(DISTINCT TRIM(v.OUTLET_CODE))  AS PRODUCTIVE_STORES
 FROM Gold.salesflo_datadump_vw v
-WHERE v.APP_USER_TAGGED_TITLE <> 'SD'
+WHERE
+    -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+    CASE
+        WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
+                            (SELECT app_user_tag_arr FROM sel_filters))
+            THEN v.APP_USER_TAGGED_TITLE <> 'SD'
+        ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
+                            (SELECT app_user_tag_arr FROM sel_filters))
+    END
   AND EXISTS (
         SELECT 1 FROM mtd_ranges m
         WHERE v.DATE BETWEEN m.m_start AND m.m_end
@@ -1146,8 +1208,6 @@ ORDER BY SALES_VALUE DESC;
 
 
 
-
-
 -- =====================================================================
 -- ✅ SECONDARY KPI #5 — NET SALES VALUE BY CATEGORY (MTD)
 -- ADJUSTED VERSION: adds MT-Direct distributor primary sales top-up
@@ -1162,18 +1222,22 @@ ORDER BY SALES_VALUE DESC;
 --
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
+--                             + APP_USER_TAG  ✅ NEW
 -- NOTE: CHANNEL_TYPE and TOWN have no equivalent in zfi_sco_vw (primary),
 --       so they are applied to the secondary component only.
+-- NOTE: APP_USER_TAG is secondary-only.
+--       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
 -- =====================================================================
 
 SET v_years        = '2027';        -- '2025,2026'
 SET v_months       = 'AUG';          -- 'SEP' | 'SEP,NOV,FEB' | NULL
 SET v_region       = NULL;               -- 'SD,KP'
-SET v_category     = NULL;               -- 'Baby Diapers,Pants'
+SET v_category     = 'Baby Diapers';               -- 'Baby Diapers,Pants'
 SET v_brand        = NULL;               -- 'Bona Plus,Momse'
 SET v_channel_type = NULL;               -- 'MT,GT'
 SET v_town         = NULL;               -- 'Karachi,Lahore'
 SET v_distributor  = NULL;               -- 'D0458,D0459'
+SET v_app_user_tag = NULL;               -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
 
 WITH params AS (
     SELECT
@@ -1192,7 +1256,8 @@ WITH params AS (
         NULLIF(TRIM($v_brand),        '')                           AS brand_raw,
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
-        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw
+        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
 ),
 -- ✅ Build arrays for ALL filters (multi-select support)
 sel_filters AS (
@@ -1214,7 +1279,12 @@ sel_filters AS (
         END AS town_arr,
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
-        END AS distributor_arr
+        END AS distributor_arr,
+        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
+        CASE
+            WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
+            ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
+        END AS app_user_tag_arr
     FROM params p
 ),
 sel_years AS (
@@ -1276,7 +1346,15 @@ secondary_by_category AS (
         SUM(v.NET_SALES)                    AS SALES_VALUE,
         SUM(SALES_CTN)                      AS SALES_CTN
     FROM Gold.salesflo_datadump_vw v
-    WHERE v.APP_USER_TAGGED_TITLE <> 'SD'
+    WHERE
+        -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+        CASE
+            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+                THEN v.APP_USER_TAGGED_TITLE <> 'SD'
+            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+        END
       AND EXISTS (
             SELECT 1 FROM mtd_ranges m
             WHERE v.DATE BETWEEN m.m_start AND m.m_end
@@ -1431,17 +1509,13 @@ SELECT
     SUM(SALES_VALUE) AS SALES_VALUE,
     SUM(SALES_CTN) AS SALES_CTN
 FROM (
-    SELECT CATEGORY, SALES_VALUE,SALES_CTN FROM secondary_by_category
+    SELECT CATEGORY, SALES_VALUE, SALES_CTN FROM secondary_by_category
     UNION ALL
-    SELECT CATEGORY, SALES_VALUE,SALES_CTN FROM primary_by_category
+    SELECT CATEGORY, SALES_VALUE, SALES_CTN FROM primary_by_category
 )
 WHERE CATEGORY IS NOT NULL
 GROUP BY CATEGORY
 ORDER BY SALES_VALUE DESC;
-
-
-
-
 
 
 
@@ -1467,8 +1541,11 @@ ORDER BY SALES_VALUE DESC;
 --
 -- Filters (ALL MULTI-SELECT): REGION + CATEGORY + BRAND
 --                             + CHANNEL_TYPE + TOWN + DISTRIBUTOR
+--                             + APP_USER_TAG  ✅ NEW
 -- NOTE: CHANNEL_TYPE and TOWN have no equivalent in zfi_sco_vw (primary),
 --       so they are applied to the secondary component only.
+-- NOTE: APP_USER_TAG is secondary-only.
+--       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
 -- =====================================================================
 
 SET v_years        = '2027';        -- '2025,2026'
@@ -1479,6 +1556,7 @@ SET v_brand        = NULL;               -- 'Bona Plus,Momse'
 SET v_channel_type = NULL;               -- 'MT,GT'
 SET v_town         = NULL;               -- 'Karachi,Lahore'
 SET v_distributor  = NULL;               -- 'D0458,D0459'
+SET v_app_user_tag = NULL;               -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
 SET top_n          = 10;                 -- kitne top brands chahiye
 
 WITH params AS (
@@ -1498,7 +1576,8 @@ WITH params AS (
         NULLIF(TRIM($v_brand),        '')                           AS brand_raw,
         NULLIF(TRIM($v_channel_type), '')                           AS channel_type_raw,
         NULLIF(TRIM($v_town),         '')                           AS town_raw,
-        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw
+        NULLIF(TRIM($v_distributor),  '')                           AS distributor_raw,
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
 ),
 -- ✅ Build arrays for ALL filters (multi-select support)
 sel_filters AS (
@@ -1520,7 +1599,12 @@ sel_filters AS (
         END AS town_arr,
         CASE WHEN p.distributor_raw IS NULL THEN ARRAY_CONSTRUCT()
              ELSE TRANSFORM(SPLIT(p.distributor_raw, ','), x -> UPPER(TRIM(x)))
-        END AS distributor_arr
+        END AS distributor_arr,
+        -- ✅ NEW: sentinel '__EXCLUDE_SD__' when no user input → default behavior
+        CASE
+            WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
+            ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
+        END AS app_user_tag_arr
     FROM params p
 ),
 sel_years AS (
@@ -1581,7 +1665,15 @@ secondary_by_brand AS (
         v.BRAND                             AS BRAND,
         SUM(v.NET_SALES)                    AS SALES_VALUE
     FROM Gold.salesflo_datadump_vw v
-    WHERE v.APP_USER_TAGGED_TITLE <> 'SD'
+    WHERE
+        -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+        CASE
+            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+                THEN v.APP_USER_TAGGED_TITLE <> 'SD'
+            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+        END
       AND EXISTS (
             SELECT 1 FROM mtd_ranges m
             WHERE v.DATE BETWEEN m.m_start AND m.m_end
@@ -1749,8 +1841,6 @@ LIMIT $top_n;
 
 
 
-
-
 -- =====================================================================
 -- ✅ FY MONTHLY TREND — SALES VALUE + CTN + PCS
 -- ADJUSTED VERSION: adds MT-Direct distributor primary sales top-up
@@ -1860,12 +1950,11 @@ ORDER BY m.FY_MONTH_START;
 
 
 
-
---region vise Targets vs achievements will be same 
+--region vise Targets vs achievements will be same
 
 -- =====================================================================
 -- ✅ SECONDARY KPI #7 — REGION-WISE TARGET vs ACHIEVEMENT
--- MTD + FYTD | Filters: ONLY v_years + v_months
+-- MTD + FYTD | Filters: v_years + v_months + APP_USER_TAG  ✅ NEW
 -- FY 2027 = Jul 2026 → Jun 2027
 -- TARGETS_VW stores CALENDAR year/month → converted via FY map
 --
@@ -1877,9 +1966,13 @@ ORDER BY m.FY_MONTH_START;
 --       + SUM(Value)     FROM gold.zfi_sco_vw for distributors listed in
 --                         GOLD.MT_DIRECT_DISTRIBUTORS_VW
 --   Grouped by REGION on both sides.
+--
+-- NOTE: APP_USER_TAG is secondary-only.
+--       Default (NULL) => exclude 'SD'. User-supplied values => IN clause.
 -- =====================================================================
-SET v_years  = '2027';        -- '' | '2026' | '2025,2026'
-SET v_months = 'AUG';         -- '' | 'SEP'  | 'JUL,SEP'
+SET v_years        = '2027';        -- '' | '2026' | '2025,2026'
+SET v_months       = 'AUG';         -- '' | 'SEP'  | 'JUL,SEP'
+SET v_app_user_tag = NULL;          -- 'SD,ABC' | NULL (default: exclude SD)  ✅ NEW
 
 WITH params AS (
     SELECT
@@ -1892,14 +1985,24 @@ WITH params AS (
              ELSE MONTH(CURRENT_DATE()) + 6
         END                                                         AS current_fy_month_no,
         NULLIF(TRIM($v_years),  '')                                 AS years_raw,
-        NULLIF(TRIM($v_months), '')                                 AS months_raw
+        NULLIF(TRIM($v_months), '')                                 AS months_raw,
+        NULLIF(TRIM($v_app_user_tag), '')                           AS app_user_tag_raw   -- ✅ NEW
+),
+-- ✅ NEW: build APP_USER_TAG array (with default sentinel)
+sel_filters AS (
+    SELECT p.*,
+        CASE
+            WHEN p.app_user_tag_raw IS NULL THEN ARRAY_CONSTRUCT('__EXCLUDE_SD__')
+            ELSE TRANSFORM(SPLIT(p.app_user_tag_raw, ','), x -> UPPER(TRIM(x)))
+        END AS app_user_tag_arr
+    FROM params p
 ),
 sel_years AS (
-    SELECT p.*,
-        CASE WHEN p.years_raw IS NULL THEN ARRAY_CONSTRUCT()
-             ELSE TRANSFORM(SPLIT(p.years_raw, ','), x -> TRY_TO_NUMBER(TRIM(x)))
+    SELECT sf.*,
+        CASE WHEN sf.years_raw IS NULL THEN ARRAY_CONSTRUCT()
+             ELSE TRANSFORM(SPLIT(sf.years_raw, ','), x -> TRY_TO_NUMBER(TRIM(x)))
         END AS year_arr
-    FROM params p
+    FROM sel_filters sf
 ),
 sel_months AS (
     SELECT s.*,
@@ -2061,7 +2164,15 @@ secondary_by_region AS (
                 WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end)
             THEN v.NET_SALES END)                         AS secondary_fytd
     FROM gold.salesflo_datadump_vw v
-    WHERE v.APP_USER_TAGGED_TITLE <> 'SD'
+    WHERE
+        -- ✅ NEW: APP_USER_TAG (secondary-only, multi-select, default excludes SD)
+        CASE
+            WHEN ARRAY_CONTAINS('__EXCLUDE_SD__'::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+                THEN v.APP_USER_TAGGED_TITLE <> 'SD'
+            ELSE ARRAY_CONTAINS(UPPER(TRIM(v.APP_USER_TAGGED_TITLE))::VARIANT,
+                                (SELECT app_user_tag_arr FROM sel_filters))
+        END
     GROUP BY v.REGION
 ),
 -- =====================================================================
@@ -2108,4 +2219,4 @@ SELECT
 FROM targets_by_region_mtd t
 FULL OUTER JOIN targets_by_region_fytd tf ON t.region = tf.region
 FULL OUTER JOIN achievements_by_region a  ON COALESCE(t.region, tf.region) = a.region
-ORDER BY total_achievement_mtd ,targets_by_region_mtd,region desc;
+ORDER BY total_achievement_mtd, targets_by_region_mtd, region DESC;

@@ -114,6 +114,17 @@ export function buildWhere(filters = {}, { skip = [] } = {}) {
   for (const [key, cols] of Object.entries(COLUMN_MAP)) {
     if (skip.includes(key)) continue;
     const values = filters[key];
+    if (key === "appUser") {
+      const appUserValues = Array.isArray(values) && values.length > 0 ? values : ["__EXCLUDE_SD__"];
+      if (appUserValues.includes("__EXCLUDE_SD__")) {
+        clauses.push("APP_USER_TAGGED_TITLE <> 'SD'");
+        continue;
+      }
+      const perCol = cols.map((c) => `${c} IN (${appUserValues.map(() => "?").join(", ")})`);
+      clauses.push(cols.length > 1 ? `(${perCol.join(" OR ")})` : perCol[0]);
+      for (const _c of cols) binds.push(...appUserValues);
+      continue;
+    }
     if (!Array.isArray(values) || values.length === 0) continue;
     const perCol = cols.map((c) => `${c} IN (${values.map(() => "?").join(", ")})`);
     clauses.push(cols.length > 1 ? `(${perCol.join(" OR ")})` : perCol[0]);
@@ -532,8 +543,12 @@ export async function getRegionTargetVsAchievement({ years, months, filters = {}
   if (!period) return [];
   const { years: y, mtdMonths, fytdMonths } = period;
   const cutoffNo = Math.max(...fytdMonths.map((m) => FISCAL_MONTH_NO[m]));
-  const resolvedFilters = await resolveSecondaryFilters(filters);
-  const { clause, binds: filterBinds } = buildWhere(resolvedFilters, { skip: ["year", "month"] });
+  const targetFilters = { ...filters };
+  for (const key of ["region", "cat", "brand", "chType", "town", "dist", "segment"]) {
+    delete targetFilters[key];
+  }
+  const resolvedFilters = await resolveSecondaryFilters(targetFilters);
+  const { clause, binds: filterBinds } = buildWhere(resolvedFilters, { skip: ["year", "month", "region", "cat", "brand", "chType", "town", "dist", "segment"] });
 
   const [mtdTargets, fytdTargets, achievementRows, topupRows] = await Promise.all([
     targetsByRegion(toCalendarPairs(y, mtdMonths)),
