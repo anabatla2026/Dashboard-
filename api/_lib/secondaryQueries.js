@@ -202,9 +202,10 @@ async function getPrimaryTopupKpis(filters, years, mtdMonths, fytdMonths) {
        SUM(CASE WHEN ${fytd.fytd} THEN p.Qty_In_Pcs END) AS FYTD_PCS,
        SUM(CASE WHEN ${lyFytd.fytd} THEN p.Value END) AS LY_FYTD_SALES
      FROM ${PRI} p
-     JOIN ${MT_DIRECT} m
-       ON UPPER(TRIM(p.PARTY_CODE)) = UPPER(TRIM(m.DISTRIBUTOR_SAP_CODE))
-    WHERE p.invoice_Date IS NOT NULL ${clause}`,
+       WHERE p.invoice_Date IS NOT NULL
+         AND UPPER(TRIM(p.PARTY_CODE)) IN (
+           SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT}
+         ) ${clause}`,
     [...mtd.mtdBinds, ...mtd.mtdBinds, ...mtd.mtdBinds, ...lyMtd.mtdBinds, ...fytd.fytdBinds, ...fytd.fytdBinds, ...fytd.fytdBinds, ...lyFytd.fytdBinds, ...binds]
   );
   return rows[0] || {};
@@ -218,9 +219,11 @@ async function getPrimaryTopupRows(filters, years, months, groupExpr, includeVol
   const rows = await query(
     `SELECT ${groupExpr} AS LABEL, SUM(p.Value) AS NET_SALES${volume}
      FROM ${PRI} p
-     JOIN ${MT_DIRECT} m
-       ON UPPER(TRIM(p.PARTY_CODE)) = UPPER(TRIM(m.DISTRIBUTOR_SAP_CODE))
-     WHERE p.invoice_Date IS NOT NULL AND ${period.mtd}${clause}
+     WHERE p.invoice_Date IS NOT NULL
+       AND UPPER(TRIM(p.PARTY_CODE)) IN (
+         SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT}
+       )
+       AND ${period.mtd}${clause}
      GROUP BY ${groupExpr}
      ORDER BY NET_SALES DESC`,
     [...period.mtdBinds, ...binds]
@@ -238,9 +241,10 @@ async function getPrimaryTopupRegionAchievement(filters, years, mtdMonths, fytdM
             SUM(CASE WHEN ${mtd.mtd} THEN p.Value END) AS ACHIEVEMENT_MTD,
             SUM(CASE WHEN ${fytd.fytd} THEN p.Value END) AS ACHIEVEMENT_FYTD
      FROM ${PRI} p
-     JOIN ${MT_DIRECT} m
-       ON UPPER(TRIM(p.PARTY_CODE)) = UPPER(TRIM(m.DISTRIBUTOR_SAP_CODE))
-    WHERE p.invoice_Date IS NOT NULL ${clause}
+     WHERE p.invoice_Date IS NOT NULL
+       AND UPPER(TRIM(p.PARTY_CODE)) IN (
+         SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT}
+       ) ${clause}
      GROUP BY p.REGION`,
     [...mtd.mtdBinds, ...fytd.fytdBinds, ...binds]
   );
@@ -255,9 +259,10 @@ async function getPrimaryTopupMom(filters, fiscalYearStart) {
             YEAR(p.invoice_Date) AS YEAR,
             SUM(p.Value) AS NET_SALES
      FROM ${PRI} p
-     JOIN ${MT_DIRECT} m
-       ON UPPER(TRIM(p.PARTY_CODE)) = UPPER(TRIM(m.DISTRIBUTOR_SAP_CODE))
-     WHERE p.invoice_Date >= ? AND p.invoice_Date < ?${clause}
+     WHERE p.invoice_Date >= ? AND p.invoice_Date < ?
+       AND UPPER(TRIM(p.PARTY_CODE)) IN (
+         SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT}
+       )${clause}
      GROUP BY TO_CHAR(p.invoice_Date, 'Mon'), YEAR(p.invoice_Date)
      ORDER BY CASE TO_CHAR(p.invoice_Date, 'Mon')
        WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
