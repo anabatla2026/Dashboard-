@@ -163,7 +163,7 @@ async function resolveSecondaryFilters(filters = {}) {
          AND SAP_CODE IS NOT NULL`,
       [...selected, ...selected, ...selected, ...selected]
     );
-    resolved.dist = rows.length ? rows.map((row) => row.V) : undefined;
+    resolved.dist = rows.length ? rows.map((row) => row.V) : ["__NO_MATCH_ON_SECONDARY__"];
   }
   return resolved;
 }
@@ -274,7 +274,7 @@ async function resolvePrimaryTopupFilters(filters = {}) {
          AND SAP_CODE IS NOT NULL`,
       [...selected, ...selected, ...selected, ...selected]
     );
-    resolved.dist = rows.length ? rows.map((row) => row.V) : undefined;
+    resolved.dist = rows.length ? rows.map((row) => row.V) : ["__NO_MATCH_ON_PRIMARY__"];
   }
   return resolved;
 }
