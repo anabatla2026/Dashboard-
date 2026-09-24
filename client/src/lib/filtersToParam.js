@@ -9,11 +9,10 @@ export function filtersToParam(filters) {
   return out;
 }
 
-// Primary recognizes year/month/region/cat/brand/dist. Not required for
-// correctness (the server ignores unknown keys anyway) but stops Segment,
-// Channel Type, Town, and App User Tag changes from triggering pointless
-// Primary re-fetches.
-const PRIMARY_FILTER_KEYS = ["year", "month", "region", "cat", "brand", "dist"];
+// Primary recognizes year/month/region/cat/brand/chType/town/dist. Not
+// required for correctness (the server ignores unknown keys anyway) but stops
+// Segment and App User Tag changes from triggering pointless Primary re-fetches.
+const PRIMARY_FILTER_KEYS = ["year", "month", "region", "cat", "brand", "chType", "town", "dist"];
 export function pickPrimaryFilters(filters) {
   const out = {};
   for (const key of PRIMARY_FILTER_KEYS) {

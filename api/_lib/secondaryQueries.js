@@ -1,7 +1,16 @@
 import { query, SNOWFLAKE_DATABASE } from "./snowflakeClient.js";
 
 const SEC = `${SNOWFLAKE_DATABASE}.GOLD.SALESFLO_DATADUMP_VW`;
-const PRI = `${SNOWFLAKE_DATABASE}.GOLD.ZFI_SCO_VW`;
+// Primary-side MT-Direct top-up now reads from the curated primary fact
+// (GOLD.VW_FACT_PRIMARY_SALES) which carries pre-computed FILTER_* columns
+// (canonical Salesflo names), fiscal buckets (FY_YEAR / FY_MONTH_NO /
+// FY_MONTH_NAME), POSTING_DATE, and a PRIMARY_EQ_SECONDARY boolean that
+// already encodes MT-Direct distributor membership (verified 100% equivalent
+// to MT_DIRECT_DISTRIBUTORS_VW membership on the current data).
+const PRI = `${SNOWFLAKE_DATABASE}.GOLD.VW_FACT_PRIMARY_SALES`;
+// Still referenced by the secondary MT-Direct EXCLUSION on SEC (the
+// SEC_NON_MT_DIRECT LEFT JOIN below), because SALESFLO_DATADUMP_VW has no
+// PRIMARY_EQ_SECONDARY flag. Not used by the primary top-up path any more.
 const MT_DIRECT = `${SNOWFLAKE_DATABASE}.GOLD.MT_DIRECT_DISTRIBUTORS_VW`;
 
 // MT-Direct distributors are captured on the primary side (`ZFI_SCO_VW`)
@@ -12,10 +21,10 @@ const MT_DIRECT = `${SNOWFLAKE_DATABASE}.GOLD.MT_DIRECT_DISTRIBUTORS_VW`;
 const SEC_NON_MT_DIRECT = `UPPER(TRIM(DISTRIBUTOR_CODE_RD)) NOT IN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT})`;
 const TARGETS = `${SNOWFLAKE_DATABASE}.GOLD.TARGETS_VW`;
 const DIST_MASTER = `${SNOWFLAKE_DATABASE}.GOLD.DISTRIBUTOR_MASTER_VW`;
-const REGION_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_REGION_MAPPING_1ST_DASH`;
-const CATEGORY_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_CATEGORY_MAPPING_1ST_DASH`;
-const BRAND_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_BRAND_MAPPING_1ST_DASH`;
-const DIST_FILTER = `${SNOWFLAKE_DATABASE}.GOLD.VW_DISTRIBUTOR_FILTER_1ST_DASH`;
+const REGION_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_FILTER_REGION`;
+const CATEGORY_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_FILTER_CATEGORY`;
+const BRAND_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_FILTER_BRAND`;
+const DIST_FILTER = `${SNOWFLAKE_DATABASE}.GOLD.VW_FILTER_DISTRIBUTOR`;
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // Fiscal month order (Jul-Jun) for sorting the Month dropdown; MONTH_SHORT
@@ -55,63 +64,122 @@ const COLUMN_MAP = {
   appUser: ["UPPER(TRIM(APP_USER_TAGGED_TITLE))"],
 };
 
+// New VW_FILTER_* views:
+//   - regions/categories/brands are canonical (one row each)
+//   - categories & brands also carry SALESFLO_ALIASES: the salesflo fact-side
+//     names the canonical value expands to (slash-separated). We MUST parse
+//     these on the secondary side so that filtering by e.g. canonical `Razor`
+//     matches fact rows stored as `Personal Care` too.
+//   - regions do not carry aliases (single fact-side name).
+//
+// Alias-collision guard: some canonical rows list an alias that is ALSO the
+// canonical name of a different row in the same view — e.g.
+//   Baby Diapers   → SALESFLO_ALIASES 'Baby Diapers / Pants'   (Pants is canonical too)
+//   Onli           → SALESFLO_ALIASES 'Onli / Onli Plus'       (Onli Plus is canonical too)
+// Expanding those verbatim would sweep the OTHER canonical's fact rows into
+// this filter, double-counting them across separate dropdown selections.
+// The guard below fetches the full canonical set for the aliased dimension
+// (once per request, lazily) and skips any alias that would collide with a
+// different canonical. The row's OWN canonical (a "self alias") is always
+// kept, and every alias that is not itself a canonical passes through
+// unchanged so genuine salesflo variants (Personal Care, Bona Pro, Oral Care,
+// Toiletries, Soap, etc.) continue to work.
 async function resolveSecondaryFilters(filters = {}) {
   let resolved = { ...filters };
+  // key -> [table, IN_SECONDARY predicate, canonical column, expand aliases?]
   const mapped = [
-    ["region", REGION_MAPPING, "SOURCE = 'SECONDARY'", ["REGION_CODE", "REGION_NAME"]],
-    ["cat", CATEGORY_MAPPING, "IN_SECONDARY = 1", ["CATEGORY_CODE", "CATEGORY_NAME"]],
-    ["brand", BRAND_MAPPING, "IN_SECONDARY = 1", ["BRAND"]],
+    ["region", REGION_MAPPING, "IN_SECONDARY = 1", "REGION_NAME", false],
+    ["cat", CATEGORY_MAPPING, "IN_SECONDARY = 1", "CATEGORY_NAME", true],
+    ["brand", BRAND_MAPPING, "IN_SECONDARY = 1", "BRAND_NAME", true],
   ];
-  for (const [key, table, predicate, columns] of mapped) {
+  const canonicalCache = {};
+  async function getCanonicalSet(key, table, canonicalCol) {
+    if (canonicalCache[key]) return canonicalCache[key];
+    const rows = await query(
+      `SELECT ${canonicalCol} AS V FROM ${table} WHERE ${canonicalCol} IS NOT NULL`
+    );
+    canonicalCache[key] = new Set(
+      rows.map((r) => String(r.V).trim().toUpperCase()).filter(Boolean)
+    );
+    return canonicalCache[key];
+  }
+
+  for (const [key, table, predicate, canonicalCol, useAliases] of mapped) {
     const values = resolved[key];
     if (!Array.isArray(values) || values.length === 0) continue;
     const selected = values.map((value) => String(value).trim().toUpperCase());
     const rows = await query(
       `SELECT * FROM ${table}
        WHERE ${predicate}
-         AND (${columns.map((column) => `UPPER(TRIM(${column})) IN (${values.map(() => "?").join(", ")})`).join(" OR ")})`,
-      columns.flatMap(() => selected)
+         AND UPPER(TRIM(${canonicalCol})) IN (${selected.map(() => "?").join(", ")})`,
+      selected
     );
     if (rows.length === 0) {
       // No mapping row satisfies the user's value AND `IN_SECONDARY = 1`
-      // (e.g. `UNDERPAD SHEET`, where `IN_SECONDARY = 0`). We must not drop
-      // the filter — that would silently expose ALL secondary rows as if
-      // they belonged to the user's selection. Instead pin the filter to
-      // a sentinel string that no fact-table value can equal, so this side
+      // (e.g. `Ono` brand, where `IN_SECONDARY = 0`). We must not drop the
+      // filter — that would silently expose ALL secondary rows as if they
+      // belonged to the user's selection. Instead pin the filter to a
+      // sentinel string that no fact-table value can equal, so this side
       // legitimately contributes zero rows.
       resolved[key] = ["__NO_MATCH_ON_SECONDARY__"];
       continue;
     }
     const expanded = new Set(selected);
-    for (const row of rows) for (const column of columns) {
-      const value = String(row[column] || "").trim().toUpperCase();
-      if (value) expanded.add(value);
+    // Collision guard: only needed for the aliased dimensions; fetched
+    // lazily so unfiltered / region-only requests pay nothing.
+    const otherCanonicals = useAliases
+      ? await getCanonicalSet(key, table, canonicalCol)
+      : null;
+    for (const row of rows) {
+      const canonical = String(row[canonicalCol] || "").trim().toUpperCase();
+      if (canonical) expanded.add(canonical);
+      if (useAliases) {
+        const raw = row.SALESFLO_ALIASES;
+        if (raw != null && String(raw).trim() !== "") {
+          for (const piece of String(raw).split("/")) {
+            const alias = piece.trim().toUpperCase();
+            if (!alias) continue;
+            // Skip aliases that are canonical names of a DIFFERENT row —
+            // those have their own mapping and would otherwise double-count
+            // between two canonical categories/brands. Always allow the
+            // row's own canonical (self-alias).
+            if (alias !== canonical && otherCanonicals.has(alias)) continue;
+            expanded.add(alias);
+          }
+        }
+      }
     }
     resolved[key] = [...expanded];
   }
   if (Array.isArray(resolved.dist) && resolved.dist.length > 0) {
     const selected = resolved.dist.map((value) => String(value).trim().toUpperCase());
+    const bindListPlaceholders = selected.map(() => "?").join(", ");
     const rows = await query(
-      `SELECT DISTINCT DISTRIBUTOR_SAP_CODE AS V FROM ${DIST_FILTER}
-       WHERE (UPPER(TRIM(DISTRIBUTOR_CODE)) IN (${selected.map(() => "?").join(", ")})
-           OR UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) IN (${selected.map(() => "?").join(", ")})
-           OR UPPER(TRIM(DISTRIBUTOR_SAP_NAME)) IN (${selected.map(() => "?").join(", ")}))
-         AND DISTRIBUTOR_SAP_CODE IS NOT NULL`,
-      [...selected, ...selected, ...selected]
+      `SELECT DISTINCT SAP_CODE AS V FROM ${DIST_FILTER}
+       WHERE (UPPER(TRIM(SAP_CODE))       IN (${bindListPlaceholders})
+           OR UPPER(TRIM(SAP_NAME))       IN (${bindListPlaceholders})
+           OR UPPER(TRIM(SALESFLO_CODE))  IN (${bindListPlaceholders})
+           OR UPPER(TRIM(SALESFLO_NAME))  IN (${bindListPlaceholders}))
+         AND SAP_CODE IS NOT NULL`,
+      [...selected, ...selected, ...selected, ...selected]
     );
     resolved.dist = rows.length ? rows.map((row) => row.V) : undefined;
   }
   return resolved;
 }
 
-const PRI_FY_EXPR = "(CASE WHEN MONTH(invoice_Date) >= 7 THEN YEAR(invoice_Date) + 1 ELSE YEAR(invoice_Date) END)";
-const PRI_MONTH_EXPR = "TO_CHAR(invoice_Date, 'Mon')";
-const PRI_FISCAL_MONTH_NO_EXPR = "(CASE WHEN MONTH(invoice_Date) >= 7 THEN MONTH(invoice_Date) - 6 ELSE MONTH(invoice_Date) + 6 END)";
+// Fiscal year/month buckets are pre-computed on the new primary fact.
+const PRI_FY_EXPR = "p.FY_YEAR";
+const PRI_MONTH_EXPR = "p.FY_MONTH_NAME";
+const PRI_FISCAL_MONTH_NO_EXPR = "p.FY_MONTH_NO";
+// Match against the pre-computed canonical FILTER_* columns. Category keeps
+// a COALESCE fallback so rows missing FILTER_CATEGORY still bucket via
+// MATERIAL_GROUP_NAME — same shape as the reference SQL.
 const PRI_FILTER_COLUMNS = {
-  region: ["UPPER(TRIM(p.REGION))", "UPPER(TRIM(p.REGION_NAME))"],
-  cat: ["UPPER(TRIM(p.MATERIAL_GROUP))", "UPPER(TRIM(p.MATERIAL_GROUP_NAME))"],
-  brand: ["UPPER(TRIM(p.BRAND))"],
-  dist: ["UPPER(TRIM(p.PARTY_CODE))"],
+  region: ["UPPER(TRIM(COALESCE(p.FILTER_REGION,'')))"],
+  cat: ["UPPER(TRIM(COALESCE(NULLIF(p.FILTER_CATEGORY,''), p.MATERIAL_GROUP_NAME, '')))"],
+  brand: ["UPPER(TRIM(COALESCE(p.FILTER_BRAND,'')))"],
+  dist: ["UPPER(TRIM(p.PARTY_CODE))", "UPPER(TRIM(p.DIST_NAME))"],
 };
 
 function primaryFilterWhere(filters = {}) {
@@ -157,22 +225,25 @@ function inList(values) {
   return values.map(() => "?").join(", ");
 }
 
+// Primary top-up mirror of resolveSecondaryFilters: same new views, but
+// `IN_PRIMARY = 1` predicate and NO alias expansion (the primary fact stores
+// the canonical category/brand/region name directly).
 async function resolvePrimaryTopupFilters(filters = {}) {
   let resolved = { ...filters };
   const mapped = [
-    ["region", REGION_MAPPING, "SOURCE = 'PRIMARY'", ["REGION_CODE", "REGION_NAME"]],
-    ["cat", CATEGORY_MAPPING, "IN_PRIMARY = 1", ["CATEGORY_CODE", "CATEGORY_NAME"]],
-    ["brand", BRAND_MAPPING, "IN_PRIMARY = 1", ["BRAND"]],
+    ["region", REGION_MAPPING, "IN_PRIMARY = 1", "REGION_NAME"],
+    ["cat", CATEGORY_MAPPING, "IN_PRIMARY = 1", "CATEGORY_NAME"],
+    ["brand", BRAND_MAPPING, "IN_PRIMARY = 1", "BRAND_NAME"],
   ];
-  for (const [key, table, predicate, columns] of mapped) {
+  for (const [key, table, predicate, canonicalCol] of mapped) {
     const values = resolved[key];
     if (!Array.isArray(values) || values.length === 0) continue;
     const selected = values.map((value) => String(value).trim().toUpperCase());
     const rows = await query(
       `SELECT * FROM ${table}
        WHERE ${predicate}
-         AND (${columns.map((column) => `UPPER(TRIM(${column})) IN (${values.map(() => "?").join(", ")})`).join(" OR ")})`,
-      columns.flatMap(() => selected)
+         AND UPPER(TRIM(${canonicalCol})) IN (${selected.map(() => "?").join(", ")})`,
+      selected
     );
     if (rows.length === 0) {
       // No mapping row satisfies the user's value AND `IN_PRIMARY = 1`
@@ -185,21 +256,23 @@ async function resolvePrimaryTopupFilters(filters = {}) {
       continue;
     }
     const expanded = new Set(selected);
-    for (const row of rows) for (const column of columns) {
-      const value = String(row[column] || "").trim().toUpperCase();
-      if (value) expanded.add(value);
+    for (const row of rows) {
+      const canonical = String(row[canonicalCol] || "").trim().toUpperCase();
+      if (canonical) expanded.add(canonical);
     }
     resolved[key] = [...expanded];
   }
   if (Array.isArray(resolved.dist) && resolved.dist.length > 0) {
     const selected = resolved.dist.map((value) => String(value).trim().toUpperCase());
+    const bindListPlaceholders = selected.map(() => "?").join(", ");
     const rows = await query(
-      `SELECT DISTINCT DISTRIBUTOR_SAP_CODE AS V FROM ${DIST_FILTER}
-       WHERE (UPPER(TRIM(DISTRIBUTOR_CODE)) IN (${selected.map(() => "?").join(", ")})
-           OR UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) IN (${selected.map(() => "?").join(", ")})
-           OR UPPER(TRIM(DISTRIBUTOR_SAP_NAME)) IN (${selected.map(() => "?").join(", ")}))
-         AND DISTRIBUTOR_SAP_CODE IS NOT NULL`,
-      [...selected, ...selected, ...selected]
+      `SELECT DISTINCT SAP_CODE AS V FROM ${DIST_FILTER}
+       WHERE (UPPER(TRIM(SAP_CODE))       IN (${bindListPlaceholders})
+           OR UPPER(TRIM(SAP_NAME))       IN (${bindListPlaceholders})
+           OR UPPER(TRIM(SALESFLO_CODE))  IN (${bindListPlaceholders})
+           OR UPPER(TRIM(SALESFLO_NAME))  IN (${bindListPlaceholders}))
+         AND SAP_CODE IS NOT NULL`,
+      [...selected, ...selected, ...selected, ...selected]
     );
     resolved.dist = rows.length ? rows.map((row) => row.V) : undefined;
   }
@@ -226,19 +299,17 @@ async function getPrimaryTopupKpis(filters, years, mtdMonths, fytdMonths) {
   const lyFytd = primaryPeriodParts(lyYears, fytdMonths);
   const rows = await query(
     `SELECT
-       SUM(CASE WHEN ${mtd.mtd} THEN p.Value END) AS MTD_SALES,
-       SUM(CASE WHEN ${mtd.mtd} THEN p.Qty_In_Ctn END) AS MTD_CTN,
-       SUM(CASE WHEN ${mtd.mtd} THEN p.Qty_In_Pcs END) AS MTD_PCS,
-       SUM(CASE WHEN ${lyMtd.mtd} THEN p.Value END) AS LY_MTD_SALES,
-       SUM(CASE WHEN ${fytd.fytd} THEN p.Value END) AS FYTD_SALES,
-       SUM(CASE WHEN ${fytd.fytd} THEN p.Qty_In_Ctn END) AS FYTD_CTN,
-       SUM(CASE WHEN ${fytd.fytd} THEN p.Qty_In_Pcs END) AS FYTD_PCS,
-       SUM(CASE WHEN ${lyFytd.fytd} THEN p.Value END) AS LY_FYTD_SALES
+       SUM(CASE WHEN ${mtd.mtd} THEN p.VALUE END) AS MTD_SALES,
+       SUM(CASE WHEN ${mtd.mtd} THEN p.QTY_IN_CTN END) AS MTD_CTN,
+       SUM(CASE WHEN ${mtd.mtd} THEN p.QTY_IN_PCS END) AS MTD_PCS,
+       SUM(CASE WHEN ${lyMtd.mtd} THEN p.VALUE END) AS LY_MTD_SALES,
+       SUM(CASE WHEN ${fytd.fytd} THEN p.VALUE END) AS FYTD_SALES,
+       SUM(CASE WHEN ${fytd.fytd} THEN p.QTY_IN_CTN END) AS FYTD_CTN,
+       SUM(CASE WHEN ${fytd.fytd} THEN p.QTY_IN_PCS END) AS FYTD_PCS,
+       SUM(CASE WHEN ${lyFytd.fytd} THEN p.VALUE END) AS LY_FYTD_SALES
      FROM ${PRI} p
-       WHERE p.invoice_Date IS NOT NULL
-         AND UPPER(TRIM(p.PARTY_CODE)) IN (
-           SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT}
-         ) ${clause}`,
+       WHERE p.POSTING_DATE IS NOT NULL
+         AND p.PRIMARY_EQ_SECONDARY = TRUE ${clause}`,
     [...mtd.mtdBinds, ...mtd.mtdBinds, ...mtd.mtdBinds, ...lyMtd.mtdBinds, ...fytd.fytdBinds, ...fytd.fytdBinds, ...fytd.fytdBinds, ...lyFytd.fytdBinds, ...binds]
   );
   return rows[0] || {};
@@ -248,14 +319,12 @@ async function getPrimaryTopupRows(filters, years, months, groupExpr, includeVol
   const resolved = await resolvePrimaryTopupFilters(filters);
   const { clause, binds } = primaryFilterWhere(resolved);
   const period = primaryPeriodParts(years, months);
-  const volume = includeVolume ? ", SUM(p.Qty_In_Ctn) AS VOLUME_CTN, SUM(p.Qty_In_Pcs) AS VOLUME_PCS" : "";
+  const volume = includeVolume ? ", SUM(p.QTY_IN_CTN) AS VOLUME_CTN, SUM(p.QTY_IN_PCS) AS VOLUME_PCS" : "";
   const rows = await query(
-    `SELECT ${groupExpr} AS LABEL, SUM(p.Value) AS NET_SALES${volume}
+    `SELECT ${groupExpr} AS LABEL, SUM(p.VALUE) AS NET_SALES${volume}
      FROM ${PRI} p
-     WHERE p.invoice_Date IS NOT NULL
-       AND UPPER(TRIM(p.PARTY_CODE)) IN (
-         SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT}
-       )
+     WHERE p.POSTING_DATE IS NOT NULL
+       AND p.PRIMARY_EQ_SECONDARY = TRUE
        AND ${period.mtd}${clause}
      GROUP BY ${groupExpr}
      ORDER BY NET_SALES DESC`,
@@ -270,15 +339,13 @@ async function getPrimaryTopupRegionAchievement(filters, years, mtdMonths, fytdM
   const mtd = primaryPeriodParts(years, mtdMonths);
   const fytd = primaryPeriodParts(years, fytdMonths);
   return query(
-    `SELECT p.REGION AS REGION,
-            SUM(CASE WHEN ${mtd.mtd} THEN p.Value END) AS ACHIEVEMENT_MTD,
-            SUM(CASE WHEN ${fytd.fytd} THEN p.Value END) AS ACHIEVEMENT_FYTD
+    `SELECT p.FILTER_REGION AS REGION,
+            SUM(CASE WHEN ${mtd.mtd} THEN p.VALUE END) AS ACHIEVEMENT_MTD,
+            SUM(CASE WHEN ${fytd.fytd} THEN p.VALUE END) AS ACHIEVEMENT_FYTD
      FROM ${PRI} p
-     WHERE p.invoice_Date IS NOT NULL
-       AND UPPER(TRIM(p.PARTY_CODE)) IN (
-         SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT}
-       ) ${clause}
-     GROUP BY p.REGION`,
+     WHERE p.POSTING_DATE IS NOT NULL
+       AND p.PRIMARY_EQ_SECONDARY = TRUE ${clause}
+     GROUP BY p.FILTER_REGION`,
     [...mtd.mtdBinds, ...fytd.fytdBinds, ...binds]
   );
 }
@@ -288,16 +355,14 @@ async function getPrimaryTopupMom(filters, fiscalYearStart) {
   const { clause, binds } = primaryFilterWhere(resolved);
   const fyEndExclusive = `${Number(fiscalYearStart.slice(0, 4)) + 1}-${fiscalYearStart.slice(5)}`;
   return query(
-    `SELECT TO_CHAR(p.invoice_Date, 'Mon') AS MONTH,
-            YEAR(p.invoice_Date) AS YEAR,
-            SUM(p.Value) AS NET_SALES
+    `SELECT TO_CHAR(p.POSTING_DATE, 'Mon') AS MONTH,
+            YEAR(p.POSTING_DATE) AS YEAR,
+            SUM(p.VALUE) AS NET_SALES
      FROM ${PRI} p
-     WHERE p.invoice_Date >= ? AND p.invoice_Date < ?
-       AND UPPER(TRIM(p.PARTY_CODE)) IN (
-         SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT}
-       )${clause}
-     GROUP BY TO_CHAR(p.invoice_Date, 'Mon'), YEAR(p.invoice_Date)
-     ORDER BY CASE TO_CHAR(p.invoice_Date, 'Mon')
+     WHERE p.POSTING_DATE >= ? AND p.POSTING_DATE < ?
+       AND p.PRIMARY_EQ_SECONDARY = TRUE ${clause}
+     GROUP BY TO_CHAR(p.POSTING_DATE, 'Mon'), YEAR(p.POSTING_DATE)
+     ORDER BY CASE TO_CHAR(p.POSTING_DATE, 'Mon')
        WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
        WHEN 'Nov' THEN 5 WHEN 'Dec' THEN 6 WHEN 'Jan' THEN 7 WHEN 'Feb' THEN 8
        WHEN 'Mar' THEN 9 WHEN 'Apr' THEN 10 WHEN 'May' THEN 11 WHEN 'Jun' THEN 12
@@ -463,7 +528,7 @@ export async function getSecondaryTrend(filters = {}, granularity = "day") {
   const years = periodFilters.year || [];
   const months = periodFilters.month || [];
   const topupRows = years.length && months.length
-    ? await getPrimaryTopupRows(filters, years.map(Number), months, `TO_VARCHAR(${effectiveGranularity === "day" ? "p.invoice_Date" : `DATE_TRUNC('${effectiveGranularity}', p.invoice_Date)`}, 'YYYY-MM-DD')`)
+    ? await getPrimaryTopupRows(filters, years.map(Number), months, `TO_VARCHAR(${effectiveGranularity === "day" ? "p.POSTING_DATE" : `DATE_TRUNC('${effectiveGranularity}', p.POSTING_DATE)`}, 'YYYY-MM-DD')`)
     : [];
   const values = new Map(rows.map((row) => [row.DATE, row.NET_SALES || 0]));
   for (const row of topupRows) values.set(row.LABEL, (values.get(row.LABEL) || 0) + (row.NET_SALES || 0));
@@ -494,7 +559,14 @@ async function groupByOne(col, filters, extra = {}) {
   const periodFilters = await withDefaultPeriod(filters);
   const years = periodFilters.year || [];
   const months = periodFilters.month || [];
-  const topupGroup = col === "CATEGORY" ? "p.MATERIAL_GROUP_NAME" : col === "BRAND" ? "p.BRAND" : col === "REGION" ? "p.REGION" : null;
+  const topupGroup =
+    col === "CATEGORY" ? "p.MATERIAL_GROUP_NAME" :
+    col === "BRAND" ? "p.BRAND" :
+    col === "REGION" ? "p.REGION" :
+    col === "CHANNEL_TYPE" ? "COALESCE(NULLIF(p.FILTER_CHANNEL_TYPE,''), 'Unmapped')" :
+    col === "CHANNEL" ? "COALESCE(NULLIF(p.FILTER_CHANNEL,''), 'Unmapped')" :
+    col === "SUB_CHANNEL" ? "COALESCE(NULLIF(p.FILTER_SUB_CHANNEL,''), 'Unmapped')" :
+    null;
   if (topupGroup && years.length && months.length) {
     const topupRows = await getPrimaryTopupRows(filters, years.map(Number), months, topupGroup);
     const values = new Map(rows.map((row) => [row.LABEL, row.NET_SALES || 0]));
@@ -684,4 +756,5 @@ export async function getSecondaryMeta() {
     dateRange: { min: r.MIND, max: r.MAXD },
   };
 }
+
 
