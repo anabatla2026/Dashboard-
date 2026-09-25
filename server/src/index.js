@@ -8,6 +8,10 @@ import { getFilterOptions } from "../../api/_lib/filterOptions.js";
 const app = express();
 app.use(cors());
 app.use(compression());
+// Filter-carrying endpoints POST the filters object in the JSON body — see
+// api/secondary/[action].js. A generous limit keeps room for the current
+// ~40 KB "Select all" case with headroom for growth.
+app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 app.get("/api/filter-options", async (req, res) => {

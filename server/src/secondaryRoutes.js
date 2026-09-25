@@ -11,9 +11,10 @@ import {
   getSecondaryDims,
   getSecondaryMeta,
 } from "../../api/_lib/secondaryQueries.js";
-import { parseFilters as parseFiltersRaw } from "../../api/_lib/httpParams.js";
-
-const parseFilters = (req) => parseFiltersRaw(req.query);
+// Filter-carrying endpoints receive `filters` in the JSON body (see
+// client/src/lib/secondaryApi.js). Small scalars stay in req.query. dims/meta
+// remain GETs.
+const parseFilters = (req) => (req.body && typeof req.body === "object" && req.body.filters && typeof req.body.filters === "object" ? req.body.filters : {});
 
 function wrap(handler) {
   return async (req, res) => {
@@ -28,7 +29,7 @@ function wrap(handler) {
 
 const router = express.Router();
 
-router.get(
+router.post(
   "/kpis",
   wrap((req) => {
     const filters = parseFilters(req);
@@ -36,31 +37,31 @@ router.get(
   })
 );
 
-router.get("/trend", wrap((req) => getSecondaryTrend(parseFilters(req), req.query.granularity || "day")));
+router.post("/trend", wrap((req) => getSecondaryTrend(parseFilters(req), req.query.granularity || "day")));
 
-router.get(
+router.post(
   "/channel-type",
   wrap((req) =>
     getByChannelType({ filters: parseFilters(req), level: req.query.level || "chType", channel: req.query.channel })
   )
 );
 
-router.get(
+router.post(
   "/category",
   wrap((req) => getByCategorySecondary({ filters: parseFilters(req), level: req.query.level || "cat" }))
 );
 
-router.get(
+router.post(
   "/brand",
   wrap((req) => getByBrandSecondary({ filters: parseFilters(req), level: req.query.level || "brand" }))
 );
 
-router.get(
+router.post(
   "/region",
   wrap((req) => getRegionAchievement({ filters: parseFilters(req), level: req.query.level || "region" }))
 );
 
-router.get(
+router.post(
   "/region-target",
   wrap((req) => {
     const filters = parseFilters(req);
@@ -68,7 +69,7 @@ router.get(
   })
 );
 
-router.get(
+router.post(
   "/mom",
   wrap((req) =>
     getMonthOverMonth({
