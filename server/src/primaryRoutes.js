@@ -8,9 +8,10 @@ import {
   getPrimaryDims,
   getPrimaryMeta,
 } from "../../api/_lib/primaryQueries.js";
-import { parseFilters as parseFiltersRaw } from "../../api/_lib/httpParams.js";
-
-const parseFilters = (req) => parseFiltersRaw(req.query);
+// Filter-carrying endpoints receive `filters` in the JSON body (see
+// client/src/lib/primaryApi.js). Small scalars stay in req.query. dims/meta
+// remain GETs.
+const parseFilters = (req) => (req.body && typeof req.body === "object" && req.body.filters && typeof req.body.filters === "object" ? req.body.filters : {});
 
 function wrap(handler) {
   return async (req, res) => {
@@ -25,7 +26,7 @@ function wrap(handler) {
 
 const router = express.Router();
 
-router.get(
+router.post(
   "/kpis",
   wrap((req) => {
     const filters = parseFilters(req);
@@ -33,19 +34,19 @@ router.get(
   })
 );
 
-router.get("/trend", wrap((req) => getPrimaryTrend(parseFilters(req), req.query.granularity || "day")));
+router.post("/trend", wrap((req) => getPrimaryTrend(parseFilters(req), req.query.granularity || "day")));
 
-router.get(
+router.post(
   "/category",
   wrap((req) => getPrimaryByCategory({ filters: parseFilters(req), level: req.query.level || "cat" }))
 );
 
-router.get(
+router.post(
   "/brand",
   wrap((req) => getPrimaryByBrand({ filters: parseFilters(req), level: req.query.level || "brand" }))
 );
 
-router.get(
+router.post(
   "/mom",
   wrap((req) =>
     getPrimaryMonthOverMonth({

@@ -151,22 +151,73 @@ async function resolveSecondaryFilters(filters = {}) {
     }
     resolved[key] = [...expanded];
   }
+  // if (Array.isArray(resolved.dist) && resolved.dist.length > 0) {
+  //   const selected = resolved.dist.map((value) => String(value).trim().toUpperCase());
+  //   const bindListPlaceholders = selected.map(() => "?").join(", ");
+  //   const rows = await query(
+  //    `SELECT DISTINCT SAP_CODE AS V FROM ${DIST_FILTER}
+  //      WHERE (UPPER(TRIM(SAP_CODE))       IN (${bindListPlaceholders})
+  //          OR UPPER(TRIM(SAP_NAME))       IN (${bindListPlaceholders})
+  //          OR UPPER(TRIM(SALESFLO_CODE))  IN (${bindListPlaceholders})
+  //          OR UPPER(TRIM(SALESFLO_NAME))  IN (${bindListPlaceholders}))
+  //        AND SAP_CODE IS NOT NULL`,
+  //     [...selected, ...selected, ...selected, ...selected]
+  //   );
+//     resolved.dist = rows.length ? rows.map((row) => row.V) : ["__NO_MATCH_ON_SECONDARY__"];
+//   }
+//   return resolved;
+// }
   if (Array.isArray(resolved.dist) && resolved.dist.length > 0) {
     const selected = resolved.dist.map((value) => String(value).trim().toUpperCase());
     const bindListPlaceholders = selected.map(() => "?").join(", ");
-    const rows = await query(
-      `SELECT DISTINCT SAP_CODE AS V FROM ${DIST_FILTER}
-       WHERE (UPPER(TRIM(SAP_CODE))       IN (${bindListPlaceholders})
-           OR UPPER(TRIM(SAP_NAME))       IN (${bindListPlaceholders})
-           OR UPPER(TRIM(SALESFLO_CODE))  IN (${bindListPlaceholders})
-           OR UPPER(TRIM(SALESFLO_NAME))  IN (${bindListPlaceholders}))
-         AND SAP_CODE IS NOT NULL`,
-      [...selected, ...selected, ...selected, ...selected]
+    // SEC dump (SALESFLO_DATADUMP_VW.DISTRIBUTOR_CODE_RD) stores distributor
+    // identifiers in TWO formats: ~321 codes as SAP-style and ~90 as
+    // Salesflo-style. The dropdown ships SAP_CODE. Returning only SAP_CODE
+    // here (as the pre-fix version did) missed the Salesflo-form rows for any
+    // SAP_CODE whose SEC rows are stored under a Salesflo child code —
+    // producing a "primary-top-up-only" total on the dashboard.
+    // The UNION below returns BOTH identifiers for every matched mapping row
+    // so `DISTRIBUTOR_CODE_RD IN (?)` can hit either format.
+//     const rows = await query(
+//       `SELECT DISTINCT UPPER(TRIM(SAP_CODE)) AS V FROM ${DIST_FILTER}
+//         WHERE (UPPER(TRIM(SAP_CODE))       IN (${bindListPlaceholders})
+//             OR UPPER(TRIM(SAP_NAME))       IN (${bindListPlaceholders})
+//             OR UPPER(TRIM(SALESFLO_CODE))  IN (${bindListPlaceholders})
+//             OR UPPER(TRIM(SALESFLO_NAME))  IN (${bindListPlaceholders}))
+//           AND SAP_CODE IS NOT NULL
+//        UNION
+//        SELECT DISTINCT UPPER(TRIM(SALESFLO_CODE)) AS V FROM ${DIST_FILTER}
+//         WHERE (UPPER(TRIM(SAP_CODE))       IN (${bindListPlaceholders})
+//             OR UPPER(TRIM(SAP_NAME))       IN (${bindListPlaceholders})
+//             OR UPPER(TRIM(SALESFLO_CODE))  IN (${bindListPlaceholders})
+//             OR UPPER(TRIM(SALESFLO_NAME))  IN (${bindListPlaceholders}))
+//           AND SALESFLO_CODE IS NOT NULL`,
+//       [...selected, ...selected, ...selected, ...selected,
+//        ...selected, ...selected, ...selected, ...selected]
+//     );
+//     resolved.dist = rows.length ? rows.map((row) => row.V) : ["__NO_MATCH_ON_SECONDARY__"];
+//   }
+//   return resolved;
+// }
+
+
+const rows = await query(
+      `SELECT DISTINCT UPPER(TRIM(SAP_CODE)) AS V FROM ${DIST_FILTER}
+        WHERE (UPPER(TRIM(DISTRIBUTOR_NAME))       IN (${bindListPlaceholders})
+           )
+          AND SAP_CODE IS NOT NULL
+       UNION
+       SELECT DISTINCT UPPER(TRIM(SALESFLO_CODE)) AS V FROM ${DIST_FILTER}
+        WHERE (UPPER(TRIM(DISTRIBUTOR_NAME))       IN (${bindListPlaceholders})
+            )
+          AND SALESFLO_CODE IS NOT NULL`,
+      [...selected, ...selected, ...selected, ...selected,
+       ...selected, ...selected, ...selected, ...selected]
     );
     resolved.dist = rows.length ? rows.map((row) => row.V) : ["__NO_MATCH_ON_SECONDARY__"];
   }
   return resolved;
-}
+} 
 
 // Fiscal year/month buckets are pre-computed on the new primary fact.
 const PRI_FY_EXPR = "p.FY_YEAR";
