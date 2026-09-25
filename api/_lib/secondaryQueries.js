@@ -1,6 +1,7 @@
 import { query, SNOWFLAKE_DATABASE } from "./snowflakeClient.js";
 
-const SEC = `${SNOWFLAKE_DATABASE}.GOLD.SALESFLO_DATADUMP_VW`;
+// const SEC = `${SNOWFLAKE_DATABASE}.GOLD.SALESFLO_DATADUMP_VW`;
+const SEC = `${SNOWFLAKE_DATABASE}.GOLD.VW_FACT_SECONDARY_SALES`;
 // Primary-side MT-Direct top-up now reads from the curated primary fact
 // (GOLD.VW_FACT_PRIMARY_SALES) which carries pre-computed FILTER_* columns
 // (canonical Salesflo names), fiscal buckets (FY_YEAR / FY_MONTH_NO /
@@ -18,7 +19,8 @@ const MT_DIRECT = `${SNOWFLAKE_DATABASE}.GOLD.MT_DIRECT_DISTRIBUTORS_VW`;
 // combined sales values, they are excluded from every secondary SUM query.
 // NOT applied to KPI #2 productive-stores/distributors COUNTs — those still
 // need MT-Direct outlets/distributors visible in the distinct counts.
-const SEC_NON_MT_DIRECT = `UPPER(TRIM(DISTRIBUTOR_CODE_RD)) NOT IN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT})`;
+// const SEC_NON_MT_DIRECT = `UPPER(TRIM(DISTRIBUTOR_CODE_RD)) NOT IN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT})`;
+const SEC_NON_MT_DIRECT = `UPPER(TRIM(DIST_SAP_CODE)) NOT IN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT})`;
 const TARGETS = `${SNOWFLAKE_DATABASE}.GOLD.TARGETS_VW`;
 const DIST_MASTER = `${SNOWFLAKE_DATABASE}.GOLD.DISTRIBUTOR_MASTER_VW`;
 const REGION_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_FILTER_REGION`;
@@ -34,12 +36,15 @@ const FISCAL_MONTH_NO = { Jul: 1, Aug: 2, Sep: 3, Oct: 4, Nov: 5, Dec: 6, Jan: 7
 
 // Fiscal year (1 Jul - 30 Jun) is labeled by the calendar year it ends in,
 // e.g. Sep 2026 is FY2027.
-const FISCAL_YEAR_EXPR = "(CASE WHEN MONTH IN ('Jul','Aug','Sep','Oct','Nov','Dec') THEN YEAR + 1 ELSE YEAR END)";
+// const FISCAL_YEAR_EXPR = "(CASE WHEN MONTH IN ('Jul','Aug','Sep','Oct','Nov','Dec') THEN YEAR + 1 ELSE YEAR END)";
+const FISCAL_YEAR_EXPR = "(YEAR(DATE) + IFF(MONTH(DATE) >= 7, 1, 0))";
 // 1-12 fiscal month number (Jul=1 .. Jun=12), used for FYTD cutoff comparisons.
-const FISCAL_MONTH_NO_EXPR = `(CASE MONTH
-  WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
-  WHEN 'Nov' THEN 5 WHEN 'Dec' THEN 6 WHEN 'Jan' THEN 7 WHEN 'Feb' THEN 8
-  WHEN 'Mar' THEN 9 WHEN 'Apr' THEN 10 WHEN 'May' THEN 11 WHEN 'Jun' THEN 12 END)`;
+// const FISCAL_MONTH_NO_EXPR = `(CASE MONTH
+//   WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
+//   WHEN 'Nov' THEN 5 WHEN 'Dec' THEN 6 WHEN 'Jan' THEN 7 WHEN 'Feb' THEN 8
+//   WHEN 'Mar' THEN 9 WHEN 'Apr' THEN 10 WHEN 'May' THEN 11 WHEN 'Jun' THEN 12 END)`;
+
+const FISCAL_MONTH_NO_EXPR = "(MOD(MONTH(DATE) + 5, 12) + 1)";
 
 // Dashboard filter key -> fact-table column(s) to match (OR'd when more than
 // one). segment/appUser are pre-existing filters. `dist` is resolved via
@@ -53,14 +58,13 @@ const FISCAL_MONTH_NO_EXPR = `(CASE MONTH
 // and for `dist`. year/month use pre-built expressions and are left alone.
 const COLUMN_MAP = {
   year: [FISCAL_YEAR_EXPR],
-  month: ["MONTH"],
-  region: ["UPPER(TRIM(REGION))"],
-  segment: ["UPPER(TRIM(CHANNEL_GROUP))"],
-  cat: ["UPPER(TRIM(CATEGORY))"],
-  brand: ["UPPER(TRIM(BRAND))"],
-  chType: ["UPPER(TRIM(CHANNEL_TYPE))"],
-  town: ["UPPER(TRIM(TOWN_NAME))"],
-  dist: ["UPPER(TRIM(DISTRIBUTOR_CODE_RD))"],
+  month: ["TO_CHAR(DATE, 'Mon')"],
+  region: ["UPPER(TRIM(COALESCE(FILTER_REGION, '')))"],
+  cat: ["UPPER(TRIM(COALESCE(NULLIF(FILTER_CATEGORY, ''), CATEGORY, '')))"],
+  brand: ["UPPER(TRIM(COALESCE(NULLIF(FILTER_BRAND, ''), BRAND, '')))"],
+  chType: ["UPPER(TRIM(COALESCE(FILTER_CHANNEL_TYPE, '')))"],
+  town: ["UPPER(TRIM(COALESCE(FILTER_TOWN, '')))"],
+  dist: ["UPPER(TRIM(DIST_SAP_CODE))", "UPPER(TRIM(DISTRIBUTOR_CODE))", "UPPER(TRIM(DIST_NAME))"],
   appUser: ["UPPER(TRIM(APP_USER_TAGGED_TITLE))"],
 };
 
@@ -267,9 +271,17 @@ export function buildWhere(filters = {}, { skip = [] } = {}) {
       continue;
     }
     if (!Array.isArray(values) || values.length === 0) continue;
-    const perCol = cols.map((c) => `${c} IN (${values.map(() => "?").join(", ")})`);
+    // Fact-side text columns for town / chType are uppercased in COLUMN_MAP;
+    // uppercase the corresponding binds so case-sensitive Snowflake IN
+    // comparisons still match (e.g. bind 'Peshawar' vs stored 'Peshawar' →
+    // both uppercased to 'PESHAWAR'). Region / cat / brand / dist are already
+    // uppercased upstream by resolveSecondaryFilters, so pass through as-is.
+    const bindsForKey = ["chType", "town"].includes(key)
+      ? values.map((value) => String(value).trim().toUpperCase())
+      : values;
+    const perCol = cols.map((c) => `${c} IN (${bindsForKey.map(() => "?").join(", ")})`);
     clauses.push(cols.length > 1 ? `(${perCol.join(" OR ")})` : perCol[0]);
-    for (const _c of cols) binds.push(...values);
+    for (const _c of cols) binds.push(...bindsForKey);
   }
   return { clause: clauses.length ? "AND " + clauses.join(" AND ") : "", binds };
 }
@@ -490,12 +502,12 @@ export async function getSecondaryKpis({ years, months, filters = {} } = {}) {
   // that compiles correctly and is evaluated once per row.
   const sql = `
     SELECT
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN NET_SALES END)  AS MTD_SALES,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN SALES_CTN END)  AS MTD_CTN,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN SALES_UNITS END) AS MTD_UNITS,
-      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND MONTH IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN NET_SALES END) AS LY_MTD_SALES,
-      COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN TRIM(OUTLET_CODE) END)      AS MTD_STORES,
-      COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN TRIM(DISTRIBUTOR_CODE) END) AS MTD_DIST,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND TO_CHAR(DATE, 'Mon') IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN NET_SALES END)  AS MTD_SALES,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND TO_CHAR(DATE, 'Mon') IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN SALES_CTN END)  AS MTD_CTN,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND TO_CHAR(DATE, 'Mon') IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN SALES_UNITS END) AS MTD_UNITS,
+      SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(lyYears)}) AND TO_CHAR(DATE, 'Mon') IN (${inList(mtdMonths)}) AND md.CODE IS NULL THEN NET_SALES END) AS LY_MTD_SALES,
+      COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND TO_CHAR(DATE, 'Mon') IN (${inList(mtdMonths)}) THEN TRIM(OUTLET_CODE) END)      AS MTD_STORES,
+      COUNT(DISTINCT CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND TO_CHAR(DATE, 'Mon') IN (${inList(mtdMonths)}) THEN TRIM(DISTRIBUTOR_CODE) END) AS MTD_DIST,
 
       SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? AND md.CODE IS NULL THEN NET_SALES END)  AS FYTD_SALES,
       SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? AND md.CODE IS NULL THEN SALES_CTN END)  AS FYTD_CTN,
@@ -507,7 +519,7 @@ export async function getSecondaryKpis({ years, months, filters = {} } = {}) {
       COUNT(DISTINCT TRIM(OUTLET_CODE)) AS TOTAL_STORES
     FROM ${SEC} v
     LEFT JOIN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) AS CODE FROM ${MT_DIRECT}) md
-      ON UPPER(TRIM(v.DISTRIBUTOR_CODE_RD)) = md.CODE
+      ON UPPER(TRIM(v.DIST_SAP_CODE)) = md.CODE
     WHERE DATE IS NOT NULL
     ${clause}
   `;
@@ -613,12 +625,10 @@ async function groupByOne(col, filters, extra = {}) {
   const years = periodFilters.year || [];
   const months = periodFilters.month || [];
   const topupGroup =
-    col === "CATEGORY" ? "p.MATERIAL_GROUP_NAME" :
-    col === "BRAND" ? "p.BRAND" :
-    col === "REGION" ? "p.REGION" :
-    col === "CHANNEL_TYPE" ? "COALESCE(NULLIF(p.FILTER_CHANNEL_TYPE,''), 'Unmapped')" :
-    col === "CHANNEL" ? "COALESCE(NULLIF(p.FILTER_CHANNEL,''), 'Unmapped')" :
-    col === "SUB_CHANNEL" ? "COALESCE(NULLIF(p.FILTER_SUB_CHANNEL,''), 'Unmapped')" :
+    col === "COALESCE(NULLIF(FILTER_CATEGORY, ''), CATEGORY)" ? "COALESCE(NULLIF(p.FILTER_CATEGORY, ''), p.MATERIAL_GROUP_NAME)" :
+    col === "COALESCE(NULLIF(FILTER_BRAND, ''), BRAND)" ? "COALESCE(NULLIF(p.FILTER_BRAND, ''), p.BRAND)" :
+    col === "FILTER_REGION" ? "p.FILTER_REGION" :
+    col === "FILTER_CHANNEL_TYPE" ? "COALESCE(NULLIF(p.FILTER_CHANNEL_TYPE,''), 'Unmapped')" :
     null;
   if (topupGroup && years.length && months.length) {
     const topupRows = await getPrimaryTopupRows(filters, years.map(Number), months, topupGroup);
@@ -632,25 +642,25 @@ async function groupByOne(col, filters, extra = {}) {
 }
 
 // Sales Value by Channel Type, with drill chType -> channel -> subChannel.
-const CHANNEL_LEVEL_COL = { chType: "CHANNEL_TYPE", channel: "CHANNEL", subChannel: "SUB_CHANNEL" };
+const CHANNEL_LEVEL_COL = { chType: "FILTER_CHANNEL_TYPE", channel: "CHANNEL", subChannel: "SUB_CHANNEL" };
 export async function getByChannelType({ filters = {}, level = "chType", channel } = {}) {
   return groupByOne(CHANNEL_LEVEL_COL[level], filters, channel ? { CHANNEL: channel } : {});
 }
 
 // Net sales by Category, with drill cat -> brand -> sku.
-const CAT_LEVEL_COL = { cat: "CATEGORY", brand: "BRAND", sku: "SKU_NAME" };
+const CAT_LEVEL_COL = { cat: "COALESCE(NULLIF(FILTER_CATEGORY, ''), CATEGORY)", brand: "COALESCE(NULLIF(FILTER_BRAND, ''), BRAND)", sku: "MAPPED_PRODUCT_NAME" };
 export async function getByCategorySecondary({ filters = {}, level = "cat" } = {}) {
   return groupByOne(CAT_LEVEL_COL[level], filters);
 }
 
 // Top brands by net sales, with drill brand -> sku.
-const BRAND_LEVEL_COL = { brand: "BRAND", sku: "SKU_NAME" };
+const BRAND_LEVEL_COL = { brand: "COALESCE(NULLIF(FILTER_BRAND, ''), BRAND)", sku: "MAPPED_PRODUCT_NAME" };
 export async function getByBrandSecondary({ filters = {}, level = "brand" } = {}) {
   return groupByOne(BRAND_LEVEL_COL[level], filters);
 }
 
 // Region-wise Achievement, with drill region -> town -> distributor.
-const REGION_LEVEL_COL = { region: "REGION", town: "TOWN_NAME", dist: "DISTRIBUTOR_NAME" };
+const REGION_LEVEL_COL = { region: "FILTER_REGION", town: "FILTER_TOWN", dist: "DIST_NAME" };
 export async function getRegionAchievement({ filters = {}, level = "region" } = {}) {
   return groupByOne(REGION_LEVEL_COL[level], filters);
 }
@@ -717,12 +727,12 @@ export async function getRegionTargetVsAchievement({ years, months, filters = {}
     targetsByRegion(toCalendarPairs(y, mtdMonths)),
     targetsByRegion(toCalendarPairs(y, fytdMonths)),
     query(
-      `SELECT REGION,
-              SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND MONTH IN (${inList(mtdMonths)}) THEN NET_SALES END) AS ACHIEVEMENT_MTD,
+      `SELECT FILTER_REGION AS REGION,
+              SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND TO_CHAR(DATE, 'Mon') IN (${inList(mtdMonths)}) THEN NET_SALES END) AS ACHIEVEMENT_MTD,
               SUM(CASE WHEN ${FISCAL_YEAR_EXPR} IN (${inList(y)}) AND ${FISCAL_MONTH_NO_EXPR} <= ? THEN NET_SALES END) AS ACHIEVEMENT_FYTD
       FROM ${SEC}
       WHERE ${SEC_NON_MT_DIRECT} ${clause}
-       GROUP BY REGION`,
+       GROUP BY FILTER_REGION`,
           [...y, ...mtdMonths, ...y, cutoffNo, ...filterBinds]
     ),
     getPrimaryTopupRegionAchievement({}, y, mtdMonths, fytdMonths),
@@ -759,11 +769,11 @@ export async function getMonthOverMonth({ fiscalYearStart, filters = {} } = {}) 
   const fyEndExclusive = `${Number(fiscalYearStart.slice(0, 4)) + 1}-${fiscalYearStart.slice(5)}`;
 
   const rows = await query(
-    `SELECT MONTH, YEAR, SUM(NET_SALES) AS NET_SALES
+    `SELECT TO_CHAR(DATE, 'Mon') AS MONTH, YEAR(DATE) AS YEAR, SUM(NET_SALES) AS NET_SALES
      FROM ${SEC}
     WHERE DATE >= ? AND DATE < ? AND ${SEC_NON_MT_DIRECT} ${clause}
-     GROUP BY MONTH, YEAR
-     ORDER BY CASE MONTH
+     GROUP BY TO_CHAR(DATE, 'Mon'), YEAR(DATE)
+     ORDER BY CASE TO_CHAR(DATE, 'Mon')
        WHEN 'Jul' THEN 1 WHEN 'Aug' THEN 2 WHEN 'Sep' THEN 3 WHEN 'Oct' THEN 4
        WHEN 'Nov' THEN 5 WHEN 'Dec' THEN 6 WHEN 'Jan' THEN 7 WHEN 'Feb' THEN 8
        WHEN 'Mar' THEN 9 WHEN 'Apr' THEN 10 WHEN 'May' THEN 11 WHEN 'Jun' THEN 12
@@ -784,7 +794,7 @@ export async function getMonthOverMonth({ fiscalYearStart, filters = {} } = {}) 
 // Distinct Year/Month/Segment/App-User-Tag option lists (Region/Category/
 // Brand/ChannelType/Town/Distributor come from filterOptions.js instead).
 export async function getSecondaryDims() {
-  const dims = { year: FISCAL_YEAR_EXPR, month: "MONTH", segment: "CHANNEL_GROUP", appUser: "APP_USER_TAGGED_TITLE" };
+  const dims = { year: FISCAL_YEAR_EXPR, month: "TO_CHAR(DATE, 'Mon')", appUser: "APP_USER_TAGGED_TITLE" };
   const result = {};
   for (const [key, col] of Object.entries(dims)) {
     const rows = await query(`SELECT DISTINCT ${col} AS V FROM ${SEC} WHERE ${col} IS NOT NULL ORDER BY ${col}`);

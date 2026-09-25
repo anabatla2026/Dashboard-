@@ -47,10 +47,10 @@ USE SCHEMA GOLD;
 SET v_years        = '2027';
 SET v_months       = 'AUG';
 SET v_region       = NULL;
-SET v_category     = 'TOOTHBRUSH';
+SET v_category     = NULL;
 SET v_brand        = NULL;
 SET v_channel_type = NULL;
-SET v_town         = NULL;
+SET v_town         = 'Peshawar';
 SET v_distributor  = NULL;
 SET v_app_user_tag = 'MDSD,OB,SD - OB';
 
@@ -149,12 +149,12 @@ pes_codes AS (
 -- ── SECONDARY ──
 secondary_agg AS (
     SELECT
-        SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), v.NET_SALES,   0)) AS MTD_SALES_VALUE,
-        SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), v.SALES_CTN,   0)) AS MTD_VOLUME_CTN,
-        SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), v.SALES_UNITS, 0)) AS MTD_VOLUME_PCS,
-        SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), v.NET_SALES,   0)) AS FYTD_SALES_VALUE,
-        SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), v.SALES_CTN,   0)) AS FYTD_VOLUME_CTN,
-        SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), v.SALES_UNITS, 0)) AS FYTD_VOLUME_PCS
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), v.NET_SALES,   0)),0) AS MTD_SALES_VALUE,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), v.SALES_CTN,   0)),0) AS MTD_VOLUME_CTN,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), v.SALES_UNITS, 0)),0) AS MTD_VOLUME_PCS,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), v.NET_SALES,   0)),0) AS FYTD_SALES_VALUE,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), v.SALES_CTN,   0)),0) AS FYTD_VOLUME_CTN,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), v.SALES_UNITS, 0)),0) AS FYTD_VOLUME_PCS
     FROM GOLD.VW_FACT_SECONDARY_SALES v
     WHERE
         CASE
@@ -184,12 +184,12 @@ secondary_agg AS (
 -- recovering materials that are not yet in PRODUCT_MAPPED.
 primary_topup AS (
     SELECT
-        SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.POSTING_DATE BETWEEN m.m_start AND m.m_end), v.VALUE,      0)) AS MTD_SALES_VALUE,
-        SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.POSTING_DATE BETWEEN m.m_start AND m.m_end), v.QTY_IN_CTN, 0)) AS MTD_VOLUME_CTN,
-        SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.POSTING_DATE BETWEEN m.m_start AND m.m_end), v.QTY_IN_PCS, 0)) AS MTD_VOLUME_PCS,
-        SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.POSTING_DATE BETWEEN f.fy_start AND f.fytd_end), v.VALUE,      0)) AS FYTD_SALES_VALUE,
-        SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.POSTING_DATE BETWEEN f.fy_start AND f.fytd_end), v.QTY_IN_CTN, 0)) AS FYTD_VOLUME_CTN,
-        SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.POSTING_DATE BETWEEN f.fy_start AND f.fytd_end), v.QTY_IN_PCS, 0)) AS FYTD_VOLUME_PCS
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.POSTING_DATE BETWEEN m.m_start AND m.m_end), v.VALUE,      0)),0) AS MTD_SALES_VALUE,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.POSTING_DATE BETWEEN m.m_start AND m.m_end), v.QTY_IN_CTN, 0)),0) AS MTD_VOLUME_CTN,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.POSTING_DATE BETWEEN m.m_start AND m.m_end), v.QTY_IN_PCS, 0)),0) AS MTD_VOLUME_PCS,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.POSTING_DATE BETWEEN f.fy_start AND f.fytd_end), v.VALUE,      0)),0) AS FYTD_SALES_VALUE,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.POSTING_DATE BETWEEN f.fy_start AND f.fytd_end), v.QTY_IN_CTN, 0)),0) AS FYTD_VOLUME_CTN,
+        COALESCE(SUM(IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.POSTING_DATE BETWEEN f.fy_start AND f.fytd_end), v.QTY_IN_PCS, 0)),0) AS FYTD_VOLUME_PCS
     FROM GOLD.VW_FACT_PRIMARY_SALES v
     WHERE UPPER(TRIM(COALESCE(v.PARTY_CODE,''))) IN (SELECT SAP_CODE FROM pes_codes)
       AND (ARRAY_SIZE((SELECT category_arr FROM sel_filters)) = 0
@@ -198,7 +198,7 @@ primary_topup AS (
                   (SELECT category_arr FROM sel_filters)
               ))
       -- Optional: uncomment to make the top-up obey the other filters as well.
-       As written the top-up follows CATEGORY only, matching the validated reference query.
+      -- As written the top-up follows CATEGORY only, matching the validated reference query.
        AND (ARRAY_SIZE((SELECT region_arr       FROM sel_filters)) = 0
             OR ARRAY_CONTAINS(UPPER(TRIM(COALESCE(v.FILTER_REGION,'')))::VARIANT,       (SELECT region_arr       FROM sel_filters)))
        AND (ARRAY_SIZE((SELECT brand_arr        FROM sel_filters)) = 0
@@ -212,13 +212,13 @@ primary_topup AS (
             OR ARRAY_CONTAINS(UPPER(TRIM(COALESCE(v.DIST_NAME,'')))::VARIANT,  (SELECT distributor_arr FROM sel_filters)))
 )
 SELECT
-    t.MTD_VOLUME_CTN                        AS PRIMARY_MTD,
-    s.MTD_SALES_VALUE  + t.MTD_SALES_VALUE  AS MTD_SALES_VALUE,
-    s.MTD_VOLUME_CTN   + t.MTD_VOLUME_CTN   AS MTD_VOLUME_CTN,
-    s.MTD_VOLUME_PCS   + t.MTD_VOLUME_PCS   AS MTD_VOLUME_PCS,
-    s.FYTD_SALES_VALUE + t.FYTD_SALES_VALUE AS FYTD_SALES_VALUE,
-    s.FYTD_VOLUME_CTN  + t.FYTD_VOLUME_CTN  AS FYTD_VOLUME_CTN,
-    s.FYTD_VOLUME_PCS  + t.FYTD_VOLUME_PCS  AS FYTD_VOLUME_PCS
+    --t.MTD_VOLUME_CTN                        AS PRIMARY_MTD,
+    ZEROIFNULL(s.MTD_SALES_VALUE)  + ZEROIFNULL(t.MTD_SALES_VALUE)  AS MTD_SALES_VALUE,
+    ZEROIFNULL(s.MTD_VOLUME_CTN)   + ZEROIFNULL(t.MTD_VOLUME_CTN)   AS MTD_VOLUME_CTN,
+    ZEROIFNULL(s.MTD_VOLUME_PCS)   + ZEROIFNULL(t.MTD_VOLUME_PCS)   AS MTD_VOLUME_PCS,
+    ZEROIFNULL(s.FYTD_SALES_VALUE) + ZEROIFNULL(t.FYTD_SALES_VALUE) AS FYTD_SALES_VALUE,
+    ZEROIFNULL(s.FYTD_VOLUME_CTN ) + ZEROIFNULL(t.FYTD_VOLUME_CTN)  AS FYTD_VOLUME_CTN,
+    ZEROIFNULL(s.FYTD_VOLUME_PCS ) + ZEROIFNULL(t.FYTD_VOLUME_PCS)  AS FYTD_VOLUME_PCS
 FROM secondary_agg s
 CROSS JOIN primary_topup t;
 
@@ -234,10 +234,10 @@ CROSS JOIN primary_topup t;
 SET v_years        = '2027';
 SET v_months       = 'AUG';
 SET v_region       = NULL;
-SET v_category     = 'Baby Diapers';
+SET v_category     = NULL;
 SET v_brand        = NULL;
 SET v_channel_type = NULL;
-SET v_town         = NULL;
+SET v_town         = 'Peshawar';
 SET v_distributor  = NULL;
 SET v_app_user_tag = NULL;
 
@@ -328,10 +328,10 @@ mtd_ranges AS (
 
 secondary_counts AS (
     SELECT
-        COUNT(DISTINCT IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), NULLIF(TRIM(v.OUTLET_CODE),''),       NULL)) AS MTD_PRODUCTIVE_STORES,
-        COUNT(DISTINCT IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), NULLIF(TRIM(v.DISTRIBUTOR_CODE),''), NULL)) AS MTD_PRODUCTIVE_DISTRIBUTOR,
-        COUNT(DISTINCT IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), NULLIF(TRIM(v.OUTLET_CODE),''),       NULL)) AS FYTD_PRODUCTIVE_STORES,
-        COUNT(DISTINCT IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), NULLIF(TRIM(v.DISTRIBUTOR_CODE),''), NULL)) AS FYTD_PRODUCTIVE_DISTRIBUTOR
+        COALESCE(COUNT(DISTINCT IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), NULLIF(TRIM(v.OUTLET_CODE),''),       NULL)),0) AS MTD_PRODUCTIVE_STORES,
+        COALESCE(COUNT(DISTINCT IFF(EXISTS (SELECT 1 FROM mtd_ranges m WHERE v.DATE BETWEEN m.m_start AND m.m_end), NULLIF(TRIM(v.DISTRIBUTOR_CODE),''), NULL)),0) AS MTD_PRODUCTIVE_DISTRIBUTOR,
+        COALESCE(COUNT(DISTINCT IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), NULLIF(TRIM(v.OUTLET_CODE),''),       NULL)),0) AS FYTD_PRODUCTIVE_STORES,
+        COALESCE(COUNT(DISTINCT IFF(EXISTS (SELECT 1 FROM fy_ranges  f WHERE v.DATE BETWEEN f.fy_start AND f.fytd_end), NULLIF(TRIM(v.DISTRIBUTOR_CODE),''), NULL)),0) AS FYTD_PRODUCTIVE_DISTRIBUTOR
     FROM GOLD.VW_FACT_SECONDARY_SALES v
     WHERE
         CASE
@@ -469,7 +469,7 @@ pes_codes AS (
 ),
 
 secondary_daily AS (
-    SELECT v.DATE AS SALES_DATE, SUM(v.NET_SALES) AS NET_SALES
+    SELECT v.DATE AS SALES_DATE, COALESCE(SUM(v.NET_SALES),0) AS NET_SALES
     FROM GOLD.VW_FACT_SECONDARY_SALES v
     WHERE
         CASE
@@ -496,7 +496,7 @@ secondary_daily AS (
     GROUP BY v.DATE
 ),
 primary_daily AS (
-    SELECT v.POSTING_DATE AS SALES_DATE, SUM(v.VALUE) AS NET_SALES
+    SELECT v.POSTING_DATE AS SALES_DATE, COALESCE(SUM(v.VALUE),0) AS NET_SALES
     FROM GOLD.VW_FACT_PRIMARY_SALES v
     WHERE UPPER(TRIM(COALESCE(v.PARTY_CODE,''))) IN (SELECT SAP_CODE FROM pes_codes)
       AND (ARRAY_SIZE((SELECT region_arr       FROM sel_filters)) = 0
@@ -521,7 +521,7 @@ primary_daily AS (
 SELECT
     SALES_DATE,
     DAY(SALES_DATE) AS DAY_OF_MONTH,
-    SUM(NET_SALES)  AS NET_SALES
+    ZEROIFNULL(SUM(NET_SALES))  AS NET_SALES
 FROM (
     SELECT SALES_DATE, NET_SALES FROM secondary_daily
     UNION ALL
@@ -687,7 +687,7 @@ secondary_by_channel AS (
 SET v_years        = '2027';
 SET v_months       = 'AUG';
 SET v_region       = NULL;
-SET v_category     = 'Baby Diapers';
+SET v_category     = NULL;
 SET v_brand        = NULL;
 SET v_channel_type = NULL;
 SET v_town         = NULL;
@@ -788,8 +788,8 @@ pes_codes AS (
 secondary_by_category AS (
     SELECT
         UPPER(TRIM(COALESCE(NULLIF(v.FILTER_CATEGORY,''), 'Unmapped'))) AS CATEGORY,
-        SUM(v.NET_SALES)                                                AS SALES_VALUE,
-        SUM(v.SALES_CTN)                                                AS SALES_CTN
+        COALESCE(SUM(v.NET_SALES),0)                                                AS SALES_VALUE,
+        COALESCE(SUM(v.SALES_CTN),0)                                                AS SALES_CTN
     FROM GOLD.VW_FACT_SECONDARY_SALES v
     WHERE
         CASE
@@ -821,8 +821,8 @@ secondary_by_category AS (
 primary_by_category AS (
     SELECT
         UPPER(TRIM(COALESCE(NULLIF(v.FILTER_CATEGORY,''), v.MATERIAL_GROUP_NAME, 'Unmapped'))) AS CATEGORY,
-        SUM(v.VALUE)                                                                          AS SALES_VALUE,
-        SUM(v.QTY_IN_CTN)                                                                     AS SALES_CTN
+        COALESCE(SUM(v.VALUE),0)                                                                          AS SALES_VALUE,
+        COALESCE(SUM(v.QTY_IN_CTN),0)                                                                     AS SALES_CTN
     FROM GOLD.VW_FACT_PRIMARY_SALES v
     WHERE UPPER(TRIM(COALESCE(v.PARTY_CODE,''))) IN (SELECT SAP_CODE FROM pes_codes)
       AND (ARRAY_SIZE((SELECT region_arr       FROM sel_filters)) = 0
@@ -846,8 +846,8 @@ primary_by_category AS (
 )
 SELECT
     CATEGORY,
-    SUM(SALES_VALUE) AS SALES_VALUE,
-    SUM(SALES_CTN)   AS SALES_CTN
+    ZEROIFNULL(SUM(SALES_VALUE)) AS SALES_VALUE,
+    ZEROIFNULL(SUM(SALES_CTN))   AS SALES_CTN
 FROM (
     SELECT CATEGORY, SALES_VALUE, SALES_CTN FROM secondary_by_category
     UNION ALL
@@ -860,11 +860,6 @@ ORDER BY SALES_VALUE DESC;
 -----------------------------------------------------------------------
 
 
--- =====================================================================
--- ✅ SECONDARY KPI #6 — TOP N BRANDS BY NET SALES VALUE (MTD)
--- Secondary + primary top-up, unioned and re-aggregated by brand, then Top-N.
--- Same fallback as category: mapped brand, else the SAP brand on the invoice line.
--- =====================================================================
 -- =====================================================================
 -- ✅ SECONDARY KPI #6 — TOP-N BRANDS BY NET SALES VALUE (MTD)
 -- Secondary + primary top-up, unioned and re-aggregated by brand.
@@ -978,7 +973,7 @@ pes_codes AS (
 secondary_by_brand AS (
     SELECT
         UPPER(TRIM(COALESCE(NULLIF(v.FILTER_BRAND,''), 'Unmapped'))) AS BRAND,
-        SUM(v.NET_SALES)                                             AS SALES_VALUE
+        COALESCE(SUM(v.NET_SALES),0)                                             AS SALES_VALUE
     FROM GOLD.VW_FACT_SECONDARY_SALES v
     WHERE
         CASE
@@ -1010,7 +1005,7 @@ secondary_by_brand AS (
 primary_by_brand AS (
     SELECT
         UPPER(TRIM(COALESCE(NULLIF(v.FILTER_BRAND,''), v.BRAND, 'Unmapped'))) AS BRAND,
-        SUM(v.VALUE)                                                          AS SALES_VALUE
+        COALESCE(SUM(v.VALUE),0)                                                          AS SALES_VALUE
     FROM GOLD.VW_FACT_PRIMARY_SALES v
     WHERE UPPER(TRIM(COALESCE(v.PARTY_CODE,''))) IN (SELECT SAP_CODE FROM pes_codes)
       AND (ARRAY_SIZE((SELECT region_arr       FROM sel_filters)) = 0
@@ -1037,7 +1032,7 @@ primary_by_brand AS (
 )
 SELECT
     BRAND,
-    SUM(SALES_VALUE) AS SALES_VALUE
+    ZEROIFNULL(SUM(SALES_VALUE)) AS SALES_VALUE
 FROM (
     SELECT BRAND, SALES_VALUE FROM secondary_by_brand
     UNION ALL
@@ -1080,9 +1075,9 @@ pes_codes AS (
 ),
 secondary AS (
     SELECT DATE_TRUNC('month', v.DATE) AS FY_MONTH_START,
-           SUM(v.NET_SALES)   AS SALES_VALUE,
-           SUM(v.SALES_CTN)   AS VOLUME_CTN,
-           SUM(v.SALES_UNITS) AS VOLUME_PCS
+           COALESCE(SUM(v.NET_SALES),0)   AS SALES_VALUE,
+           COALESCE(SUM(v.SALES_CTN),0)   AS VOLUME_CTN,
+           COALESCE(SUM(v.SALES_UNITS),0) AS VOLUME_PCS
     FROM GOLD.VW_FACT_SECONDARY_SALES v
     WHERE v.DATE >= (SELECT fy_start FROM params)
       AND v.DATE <  DATEADD('year', 1, (SELECT fy_start FROM params))
@@ -1092,9 +1087,9 @@ secondary AS (
 ),
 primary_topup AS (
     SELECT DATE_TRUNC('month', v.POSTING_DATE) AS FY_MONTH_START,
-           SUM(v.VALUE)      AS SALES_VALUE,
-           SUM(v.QTY_IN_CTN) AS VOLUME_CTN,
-           SUM(v.QTY_IN_PCS) AS VOLUME_PCS
+           COALESCE(SUM(v.VALUE),0)      AS SALES_VALUE,
+           COALESCE(SUM(v.QTY_IN_CTN),0) AS VOLUME_CTN,
+           COALESCE(SUM(v.QTY_IN_PCS),0) AS VOLUME_PCS
     FROM GOLD.VW_FACT_PRIMARY_SALES v
     WHERE v.POSTING_DATE >= (SELECT fy_start FROM params)
       AND v.POSTING_DATE <  DATEADD('year', 1, (SELECT fy_start FROM params))
