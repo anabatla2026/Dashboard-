@@ -1,3 +1,6 @@
+
+
+
 import { query, SNOWFLAKE_DATABASE } from "./snowflakeClient.js";
 
 // const SEC = `${SNOWFLAKE_DATABASE}.GOLD.SALESFLO_DATADUMP_VW`;
