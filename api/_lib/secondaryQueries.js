@@ -750,7 +750,10 @@ export async function getRegionTargetVsAchievement({ years, months, filters = {}
   const fytdMap = new Map(fytdTargets.map((r) => [r.REGION, r.TARGET || 0]));
   const regions = new Set([...mtdMap.keys(), ...fytdMap.keys(), ...achievementMap.keys()]);
 
+  // "Affordable Range" (any casing) is a product-range bucket that leaks into
+  // the region columns, not a real region — keep it off this chart.
   return [...regions]
+    .filter((region) => String(region ?? "").trim().toUpperCase() !== "AFFORDABLE RANGE")
     .map((region) => {
       const a = achievementMap.get(region);
       return {

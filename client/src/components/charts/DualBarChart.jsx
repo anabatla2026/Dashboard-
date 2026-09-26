@@ -125,6 +125,17 @@ export default function DualBarChart({
             {bar(LABEL_W, groupY, wA, BAR_H, hueVarA, idA, r.isOther, "a")}
             {bar(LABEL_W, groupY + BAR_H + BAR_GAP, wB, BAR_H, hueVarB, idB, r.isOther, "b")}
 
+            {r.secondary > 0 && (
+              <text x={LABEL_W + wA + DX + 5} y={groupY + BAR_H / 2 + 3} className="value-label">
+                {compact(r.secondary)}
+              </text>
+            )}
+            {r.primary > 0 && (
+              <text x={LABEL_W + wB + DX + 5} y={groupY + BAR_H + BAR_GAP + BAR_H / 2 + 3} className="value-label">
+                {compact(r.primary)}
+              </text>
+            )}
+
             {/* Hit-test rects on top, split top/bottom half so hover always
                 wins (paths only catch events on their filled pixels, and a
                 thin bar is an unreliable hover target) and correctly
