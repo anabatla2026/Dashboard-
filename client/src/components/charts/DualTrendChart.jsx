@@ -6,7 +6,7 @@ const W = 920,
   H = 200,
   MARGIN_L = 50,
   MARGIN_R = 16,
-  MARGIN_T = 24,
+  MARGIN_T = 12,
   MARGIN_B = 28;
 const PLOT_W = W - MARGIN_L - MARGIN_R;
 const PLOT_H = H - MARGIN_T - MARGIN_B;
@@ -100,9 +100,21 @@ export default function DualTrendChart({
   }
 
   const labelStep = Math.max(1, Math.ceil(dates.length / 10));
-  const legendAWidth = labelA.length * 5.8;
 
+  // The legend lives outside the svg: the svg stretches with
+  // preserveAspectRatio="none", which squashes any text drawn inside it.
   return (
+    <div className="dual-trend">
+      <div className="series-legend">
+        <span className="series-legend-item">
+          <span className="sw" style={{ background: `var(${hueVarA})` }} />
+          {labelA}
+        </span>
+        <span className="series-legend-item">
+          <span className="sw dashed" style={{ "--sw": `var(${hueVarB})` }} />
+          {labelB}
+        </span>
+      </div>
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="trend-svg">
       <defs>
         <linearGradient id="dual-trend-area" x1="0" y1="0" x2="0" y2="1">
@@ -110,15 +122,6 @@ export default function DualTrendChart({
           <stop offset="100%" stopColor={`var(${hueVarA})`} stopOpacity="0" />
         </linearGradient>
       </defs>
-
-      <circle cx={MARGIN_L} cy={12} r="4" fill={`var(${hueVarA})`} />
-      <text x={MARGIN_L + 9} y={15.5} className="tick-label">
-        {labelA}
-      </text>
-      <circle cx={MARGIN_L + 20 + legendAWidth} cy={12} r="4" fill={`var(${hueVarB})`} />
-      <text x={MARGIN_L + 29 + legendAWidth} y={15.5} className="tick-label">
-        {labelB}
-      </text>
 
       {axisItems}
       <path d={secArea} fill="url(#dual-trend-area)" stroke="none" />
@@ -148,8 +151,10 @@ export default function DualTrendChart({
             show(e, {
               color: cssVar(hueVarA),
               label: formatDateLabel(d, granularity),
-              value: `${labelA}: ${moneyFull(secSeries[i])}`,
-              extra: `${labelB}: ${moneyFull(priSeries[i])}`,
+              series: [
+                { color: cssVar(hueVarA), label: labelA, value: moneyFull(secSeries[i]) },
+                { color: cssVar(hueVarB), label: labelB, value: moneyFull(priSeries[i]) },
+              ],
             });
           }}
           onPointerLeave={() => {
@@ -186,5 +191,6 @@ export default function DualTrendChart({
         </g>
       ))}
     </svg>
+    </div>
   );
 }

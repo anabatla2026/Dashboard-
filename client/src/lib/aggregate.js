@@ -16,10 +16,43 @@ export function cumulativeShare(rows, key) {
   });
 }
 
+// Shared top-N split. Keeps the top `topN` entries plus any label in
+// `pinned` (items the user pulled out of "Other"), and folds the rest into a
+// single "Other" row. The Other row carries its members in `items` so the
+// widget can list what's inside and let the user add any of them back.
+function withOther(sorted, topN, pinned, total, makeOther) {
+  if (sorted.length <= topN) return sorted;
+  const pin = pinned || new Set();
+  const head = [];
+  const rest = [];
+  sorted.forEach((r, i) => (i < topN || pin.has(r.label) ? head : rest).push(r));
+  if (rest.length && rest.reduce((s, r) => s + total(r), 0) > 0) {
+    head.push({ label: "Other", ...makeOther(rest), isOther: true, items: rest });
+  }
+  return head;
+}
+
+const sumDual = (rest) =>
+  rest.reduce((acc, r) => ({ secondary: acc.secondary + r.secondary, primary: acc.primary + r.primary }), { secondary: 0, primary: 0 });
+const dualTotal = (r) => r.secondary + r.primary;
+const sumValue = (rest) => ({ value: rest.reduce((s, r) => s + r.value, 0) });
+const valueTotal = (r) => r.value;
+
+function mergeDual(secMap, priMap, topN, pinned) {
+  const labels = new Set([...secMap.keys(), ...priMap.keys()]);
+  const arr = Array.from(labels, (label) => ({
+    label,
+    secondary: secMap.get(label) || 0,
+    primary: priMap.get(label) || 0,
+  }));
+  arr.sort((a, b) => dualTotal(b) - dualTotal(a));
+  return withOther(arr, topN, pinned, dualTotal, sumDual);
+}
+
 // Same idea as aggregateTop but merges two row sets (e.g. secondary +
 // primary) sharing a dimension key into one label list, so a chart can show
 // both series side by side for direct comparison.
-export function aggregateDualTop(secRows, priRows, key, topN) {
+export function aggregateDualTop(secRows, priRows, key, topN, pinned) {
   const secMap = new Map();
   for (const r of secRows) {
     if (r[key] == null || r[key] === "") continue;
@@ -30,76 +63,30 @@ export function aggregateDualTop(secRows, priRows, key, topN) {
     if (r[key] == null || r[key] === "") continue;
     priMap.set(r[key], (priMap.get(r[key]) || 0) + (r.netSales || 0));
   }
-
-  const labels = new Set([...secMap.keys(), ...priMap.keys()]);
-  let arr = Array.from(labels, (label) => ({
-    label,
-    secondary: secMap.get(label) || 0,
-    primary: priMap.get(label) || 0,
-  }));
-  arr.sort((a, b) => b.secondary + b.primary - (a.secondary + a.primary));
-
-  if (arr.length > topN) {
-    const head = arr.slice(0, topN);
-    const rest = arr.slice(topN).reduce(
-      (acc, r) => ({ secondary: acc.secondary + r.secondary, primary: acc.primary + r.primary }),
-      { secondary: 0, primary: 0 }
-    );
-    if (rest.secondary + rest.primary > 0) head.push({ label: "Other", ...rest, isOther: true });
-    arr = head;
-  }
-  return arr;
+  return mergeDual(secMap, priMap, topN, pinned);
 }
 
 // Applies the same top-N + "Other" bucketing as aggregateTop, but to an
 // already-grouped {label, value} list (e.g. from a server-side GROUP BY)
 // instead of raw transaction rows.
-export function topNWithOther(arr, topN) {
-  if (arr.length <= topN) return arr;
-  const head = arr.slice(0, topN);
-  const rest = arr.slice(topN).reduce((s, r) => s + r.value, 0);
-  if (rest > 0) head.push({ label: "Other", value: rest, isOther: true });
-  return head;
+export function topNWithOther(arr, topN, pinned) {
+  return withOther(arr, topN, pinned, valueTotal, sumValue);
 }
 
 // Same shape as aggregateDualTop, but both sides arrive already grouped by
 // the server (see useServerAggregate) — both Primary and Secondary are
 // Snowflake-backed now, so neither needs summing raw rows client-side here.
-export function mergeDualTop(secondaryAgg, primaryAgg, topN) {
+export function mergeDualTop(secondaryAgg, primaryAgg, topN, pinned) {
   const secMap = new Map(secondaryAgg.map((r) => [r.label, r.value]));
   const priMap = new Map(primaryAgg.map((r) => [r.label, r.value]));
-
-  const labels = new Set([...secMap.keys(), ...priMap.keys()]);
-  let arr = Array.from(labels, (label) => ({
-    label,
-    secondary: secMap.get(label) || 0,
-    primary: priMap.get(label) || 0,
-  }));
-  arr.sort((a, b) => b.secondary + b.primary - (a.secondary + a.primary));
-
-  if (arr.length > topN) {
-    const head = arr.slice(0, topN);
-    const rest = arr.slice(topN).reduce(
-      (acc, r) => ({ secondary: acc.secondary + r.secondary, primary: acc.primary + r.primary }),
-      { secondary: 0, primary: 0 }
-    );
-    if (rest.secondary + rest.primary > 0) head.push({ label: "Other", ...rest, isOther: true });
-    arr = head;
-  }
-  return arr;
+  return mergeDual(secMap, priMap, topN, pinned);
 }
 
-export function aggregateTop(rows, key, topN) {
+export function aggregateTop(rows, key, topN, pinned) {
   const map = new Map();
   for (const r of rows) {
     map.set(r[key], (map.get(r[key]) || 0) + r.netSales);
   }
-  let arr = Array.from(map, ([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
-  if (arr.length > topN) {
-    const head = arr.slice(0, topN);
-    const rest = arr.slice(topN).reduce((s, r) => s + r.value, 0);
-    if (rest > 0) head.push({ label: "Other", value: rest, isOther: true });
-    arr = head;
-  }
-  return arr;
+  const arr = Array.from(map, ([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  return withOther(arr, topN, pinned, valueTotal, sumValue);
 }

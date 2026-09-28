@@ -10,7 +10,7 @@ import { useFilters } from "../context/FilterContext";
 import { secondaryApi } from "../lib/secondaryApi";
 import { primaryApi } from "../lib/primaryApi";
 import { pickPrimaryFilters } from "../lib/filtersToParam";
-import { truncate } from "../lib/format";
+import { compact, truncate } from "../lib/format";
 import { DIM_LABELS } from "../lib/hierarchies";
 import WidgetInfo from "./WidgetInfo";
 import Breadcrumb from "./Breadcrumb";
@@ -119,6 +119,17 @@ export default function ChartCard({
 
   const aggDim = useHierarchy ? pathDrill.currentDim : effectiveDim;
 
+  // Labels the user pulled out of the "Other" bucket via the widget's Other
+  // dropdown. Scoped to the dimension being shown so drilling in/out starts fresh.
+  const [pinState, setPinState] = useState({ dim: aggDim, labels: new Set() });
+  const pinned = pinState.dim === aggDim ? pinState.labels : null;
+  const togglePin = (label) =>
+    setPinState((prev) => {
+      const labels = new Set(prev.dim === aggDim ? prev.labels : []);
+      labels.has(label) ? labels.delete(label) : labels.add(label);
+      return { dim: aggDim, labels };
+    });
+
   // Only chType has a drill level (`channel`) that isn't itself a global
   // filter dimension, so it's passed to the server query separately.
   const channelParent = useServerAgg && dim === "chType" ? pathDrill.path.find((s) => s.dim === "channel")?.value : undefined;
@@ -136,18 +147,23 @@ export default function ChartCard({
 
   const aggregated = useMemo(() => {
     if (!isAggType || effectiveType === "dual-bar-h") return null;
-    if (useServerAgg) return topNWithOther(serverAgg, effectiveTopN);
-    return aggregateTop(scopedRows, aggDim, effectiveTopN);
-  }, [scopedRows, aggDim, effectiveTopN, isAggType, effectiveType, useServerAgg, serverAgg]);
+    if (useServerAgg) return topNWithOther(serverAgg, effectiveTopN, pinned);
+    return aggregateTop(scopedRows, aggDim, effectiveTopN, pinned);
+  }, [scopedRows, aggDim, effectiveTopN, isAggType, effectiveType, useServerAgg, serverAgg, pinned]);
 
   const dualAggregated = useMemo(() => {
     if (effectiveType !== "dual-bar-h") return null;
-    if (useServerAgg) return mergeDualTop(serverAgg, primaryServerAgg, effectiveTopN);
-    return aggregateDualTop(scopedSecondaryRows, scopedPrimaryRows, aggDim, effectiveTopN);
-  }, [effectiveType, scopedSecondaryRows, scopedPrimaryRows, aggDim, effectiveTopN, useServerAgg, serverAgg, primaryServerAgg]);
+    if (useServerAgg) return mergeDualTop(serverAgg, primaryServerAgg, effectiveTopN, pinned);
+    return aggregateDualTop(scopedSecondaryRows, scopedPrimaryRows, aggDim, effectiveTopN, pinned);
+  }, [effectiveType, scopedSecondaryRows, scopedPrimaryRows, aggDim, effectiveTopN, useServerAgg, serverAgg, primaryServerAgg, pinned]);
 
   const activeAggregated = dualAggregated || aggregated;
-  const hasOther = activeAggregated?.some((r) => r.isOther);
+  const otherRow = activeAggregated?.find((r) => r.isOther);
+  const hasOther = !!otherRow;
+  const otherItems = otherRow?.items || [];
+  const pinnedShown = pinned ? activeAggregated?.filter((r) => pinned.has(r.label)) || [] : [];
+  const rowTotal = (r) => (r.value ?? 0) + (r.secondary ?? 0) + (r.primary ?? 0);
+  const shownCount = activeAggregated ? activeAggregated.length - (hasOther ? 1 : 0) : 0;
   const drilledIn = useHierarchy && pathDrill.path.length > 0;
 
   const rootTitle = useFallback ? fallbackTitle || title : title;
@@ -188,8 +204,8 @@ export default function ChartCard({
           ) : (
             <div className="widget-sub">
               {useFallback
-                ? `Ranked · single day of data so far${hasOther ? ` · top ${activeAggregated.length - 1} shown` : ""}`
-                : `${CHART_LABEL[effectiveType]}${hasOther ? ` · top ${activeAggregated.length - 1} shown` : ""}`}
+                ? `Ranked · single day of data so far${hasOther ? ` · ${shownCount} shown` : ""}`
+                : `${CHART_LABEL[effectiveType]}${hasOther ? ` · ${shownCount} shown` : ""}`}
               {badge && <span className="kpi-badge kpi-badge--pending">{badge}</span>}
             </div>
           )}
@@ -206,6 +222,35 @@ export default function ChartCard({
               <option value="day">Daily</option>
               <option value="week">Weekly</option>
               <option value="month">Monthly</option>
+            </select>
+          )}
+          {(otherItems.length > 0 || pinnedShown.length > 0) && (
+            <select
+              className="fy-select"
+              value=""
+              onChange={(e) => e.target.value && togglePin(e.target.value)}
+              aria-label="Show items from Other"
+              title="Pick an item from Other to show it as its own bar"
+            >
+              <option value="">Other ({otherItems.length})</option>
+              {otherItems.length > 0 && (
+                <optgroup label="Add to chart">
+                  {otherItems.map((r) => (
+                    <option key={r.label} value={r.label}>
+                      {truncate(String(r.label), 28)} · {compact(rowTotal(r))}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {pinnedShown.length > 0 && (
+                <optgroup label="Added (select to remove)">
+                  {pinnedShown.map((r) => (
+                    <option key={r.label} value={r.label}>
+                      ✓ {truncate(String(r.label), 28)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           )}
           {chipDrill?.hasActive && (

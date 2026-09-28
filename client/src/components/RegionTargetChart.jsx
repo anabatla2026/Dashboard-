@@ -25,6 +25,8 @@ export default function RegionTargetChart({ filters, className = "" }) {
     () =>
       (data || [])
         .map((r) => ({ label: r.region, secondary: r[mode].achievement, primary: r[mode].target }))
+        // Regions with neither achievement nor target are just empty rows — drop them.
+        .filter((r) => Number(r.primary) || Number(r.secondary))
         .sort((a, b) => b.primary + b.secondary - (a.primary + a.secondary)),
     [data, mode]
   );
