@@ -17,6 +17,7 @@ const PRI = `${SNOWFLAKE_DATABASE}.GOLD.VW_FACT_PRIMARY_SALES`;
 // PRIMARY_EQ_SECONDARY flag. Not used by the primary top-up path any more.
 const MT_DIRECT = `${SNOWFLAKE_DATABASE}.GOLD.MT_DIRECT_DISTRIBUTORS_VW`;
 
+
 // MT-Direct distributors are captured on the primary side (`ZFI_SCO_VW`)
 // and added via the primary top-up path. To avoid double-counting them in
 // combined sales values, they are excluded from every secondary SUM query.
