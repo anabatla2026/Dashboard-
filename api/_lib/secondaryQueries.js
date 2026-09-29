@@ -68,7 +68,7 @@ const COLUMN_MAP = {
   chType: ["UPPER(TRIM(COALESCE(FILTER_CHANNEL_TYPE, '')))"],
   town: ["UPPER(TRIM(COALESCE(FILTER_TOWN, '')))"],
   dist: ["UPPER(TRIM(DIST_SAP_CODE))", "UPPER(TRIM(DISTRIBUTOR_CODE))", "UPPER(TRIM(DIST_NAME))"],
-  appUser: ["UPPER(TRIM(APP_USER_TAGGED_TITLE))"],
+  appUser: ["UPPER(TRIM(COALESCE(APP_USER_TAGGED_TITLE, '')))"],
 };
 
 // New VW_FILTER_* views:
@@ -236,7 +236,7 @@ const PRI_FISCAL_MONTH_NO_EXPR = "p.FY_MONTH_NO";
 const PRI_FILTER_COLUMNS = {
   region: ["UPPER(TRIM(COALESCE(p.FILTER_REGION,'')))"],
   cat: ["UPPER(TRIM(COALESCE(NULLIF(p.FILTER_CATEGORY,''), p.MATERIAL_GROUP_NAME, '')))"],
-  brand: ["UPPER(TRIM(COALESCE(p.FILTER_BRAND,'')))"],
+  brand: ["UPPER(TRIM(COALESCE(NULLIF(p.FILTER_BRAND,''), p.BRAND, '')))"],
   chType: ["UPPER(TRIM(COALESCE(p.FILTER_CHANNEL_TYPE,'')))"],
   town: ["UPPER(TRIM(COALESCE(p.FILTER_TOWN,'')))"],
   dist: ["UPPER(TRIM(p.PARTY_CODE))", "UPPER(TRIM(p.DIST_NAME))"],
@@ -248,8 +248,11 @@ function primaryFilterWhere(filters = {}) {
   for (const [key, columns] of Object.entries(PRI_FILTER_COLUMNS)) {
     const values = filters[key];
     if (!Array.isArray(values) || values.length === 0) continue;
-    clauses.push(`(${columns.map((column) => `${column} IN (${values.map(() => "?").join(", ")})`).join(" OR ")})`);
-    for (const column of columns) binds.push(...values);
+    // Columns are UPPER(TRIM(...)); chType/town reach here in dropdown casing
+    // (e.g. 'Affordable Range'), so uppercase every bind or the top-up is 0.
+    const upper = values.map((value) => String(value).trim().toUpperCase());
+    clauses.push(`(${columns.map((column) => `${column} IN (${upper.map(() => "?").join(", ")})`).join(" OR ")})`);
+    for (const column of columns) binds.push(...upper);
   }
   return { clause: clauses.length ? `AND ${clauses.join(" AND ")}` : "", binds };
 }
@@ -265,12 +268,14 @@ export function buildWhere(filters = {}, { skip = [] } = {}) {
     if (key === "appUser") {
       const appUserValues = Array.isArray(values) && values.length > 0 ? values : ["__EXCLUDE_SD__"];
       if (appUserValues.includes("__EXCLUDE_SD__")) {
-        clauses.push("UPPER(TRIM(APP_USER_TAGGED_TITLE)) <> 'SD'");
+        // COALESCE keeps untagged (NULL) rows; a bare `<> 'SD'` drops them.
+        clauses.push("COALESCE(APP_USER_TAGGED_TITLE, '') <> 'SD'");
         continue;
       }
-      const perCol = cols.map((c) => `${c} IN (${appUserValues.map(() => "?").join(", ")})`);
+      const upperAppUser = appUserValues.map((value) => String(value).trim().toUpperCase());
+      const perCol = cols.map((c) => `${c} IN (${upperAppUser.map(() => "?").join(", ")})`);
       clauses.push(cols.length > 1 ? `(${perCol.join(" OR ")})` : perCol[0]);
-      for (const _c of cols) binds.push(...appUserValues);
+      for (const _c of cols) binds.push(...upperAppUser);
       continue;
     }
     if (!Array.isArray(values) || values.length === 0) continue;
