@@ -27,6 +27,7 @@ const MT_DIRECT = `${SNOWFLAKE_DATABASE}.GOLD.MT_DIRECT_DISTRIBUTORS_VW`;
 const SEC_NON_MT_DIRECT = `UPPER(TRIM(DIST_SAP_CODE)) NOT IN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT})`;
 const TARGETS = `${SNOWFLAKE_DATABASE}.GOLD.TARGETS_VW`;
 const DIST_MASTER = `${SNOWFLAKE_DATABASE}.GOLD.DISTRIBUTOR_MASTER_VW`;
+const DIST_SALESFLO = `${SNOWFLAKE_DATABASE}.GOLD.VW_DIM_DISTRIBUTOR_SALESFLO`;
 const REGION_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_FILTER_REGION`;
 const CATEGORY_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_FILTER_CATEGORY`;
 const BRAND_MAPPING = `${SNOWFLAKE_DATABASE}.GOLD.VW_FILTER_BRAND`;
@@ -681,6 +682,12 @@ export async function getRegionAchievement({ filters = {}, level = "region" } = 
 // not the fiscal-year-end label used elsewhere — each selected fiscal
 // (year, month) is converted to its calendar equivalent before matching
 // (toCalendarPairs).
+//
+// Targets are keyed on the SalesFlo distributor code, so they roll up on
+// VW_DIM_DISTRIBUTOR_SALESFLO.REGION rather than DISTRIBUTOR_MASTER_VW's
+// NEW_REGION — the latter spells some regions differently from the
+// FILTER_REGION used by the achievement side (e.g. "South Nana Momse" vs
+// "South Nana & Momse"), which split those regions into two rows.
 const TARGET_CALENDAR_MONTHS = new Set(["Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]);
 function toCalendarPairs(years, months) {
   const seen = new Set();
@@ -705,15 +712,15 @@ async function targetsByRegion(calendarPairs) {
   const rows = await query(
     `
     WITH targets_agg AS (
-      SELECT TRIM(t.DIST_CODE) AS DISTRIBUTOR_CODE, SUM(TRY_TO_NUMBER(t.VALUE)) AS TOTAL_TARGET
+      SELECT TRIM(t.DIST_CODE) AS DISTRIBUTOR_CODE, SUM(t.VALUE) AS TOTAL_TARGET
       FROM ${TARGETS} t
       WHERE ${clause}
       GROUP BY TRIM(t.DIST_CODE)
     )
-    SELECT d.NEW_REGION AS REGION, SUM(ta.TOTAL_TARGET) AS TARGET
+    SELECT d.REGION AS REGION, SUM(ta.TOTAL_TARGET) AS TARGET
     FROM targets_agg ta
-    JOIN ${DIST_MASTER} d ON ta.DISTRIBUTOR_CODE = TRIM(d.DISTRIBUTOR_CODE)
-    GROUP BY d.NEW_REGION
+    JOIN ${DIST_SALESFLO} d ON d.SALESFLO_CODE = UPPER(TRIM(ta.DISTRIBUTOR_CODE))
+    GROUP BY d.REGION
     `,
     binds
   );
