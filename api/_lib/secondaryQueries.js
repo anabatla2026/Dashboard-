@@ -22,7 +22,11 @@ const MT_DIRECT = `${SNOWFLAKE_DATABASE}.GOLD.MT_DIRECT_DISTRIBUTORS_VW`;
 // NOT applied to KPI #2 productive-stores/distributors COUNTs — those still
 // need MT-Direct outlets/distributors visible in the distinct counts.
 // const SEC_NON_MT_DIRECT = `UPPER(TRIM(DISTRIBUTOR_CODE_RD)) NOT IN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT})`;
-const SEC_NON_MT_DIRECT = `UPPER(TRIM(DIST_SAP_CODE)) NOT IN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT})`;
+// COALESCE to '' first: a bare `NOT IN` yields NULL (not TRUE) for rows whose
+// DIST_SAP_CODE is NULL/blank, silently dropping them. Those rows are not
+// MT-Direct and must be kept — this matches the `md.CODE IS NULL` LEFT JOIN
+// form used by getSecondaryKpis, which is the correct reference.
+const SEC_NON_MT_DIRECT = `COALESCE(UPPER(TRIM(DIST_SAP_CODE)), '') NOT IN (SELECT DISTINCT UPPER(TRIM(DISTRIBUTOR_SAP_CODE)) FROM ${MT_DIRECT})`;
 const TARGETS = `${SNOWFLAKE_DATABASE}.GOLD.TARGETS_VW`;
 const DIST_MASTER = `${SNOWFLAKE_DATABASE}.GOLD.DISTRIBUTOR_MASTER_VW`;
 const DIST_SALESFLO = `${SNOWFLAKE_DATABASE}.GOLD.VW_DIM_DISTRIBUTOR_SALESFLO`;
